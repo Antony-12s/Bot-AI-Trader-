@@ -1,4 +1,4 @@
-"""Trading signal. This is the only file to edit when changing the strategy.
+"""Rule-based brain (BRAIN=rules). Edit this file to change the rules.
 
 Building blocks live in indicators.py: sma, ema, rsi, macd, bollinger.
 """
@@ -11,17 +11,18 @@ SLOW_PERIOD = 30
 CANDLES_NEEDED = SLOW_PERIOD + 1
 
 
-def decide(closes):
-    """Return "buy", "sell" or None from closed-candle close prices, oldest first.
+def decide(closes, config=None):
+    """Return (signal, reason): signal is "buy", "sell" or None for hold.
 
-    Sample moving-average cross. It exists to exercise the pipeline end to end,
-    it is not a tested or profitable strategy.
+    closes are closed-candle close prices, oldest first. Sample moving-average
+    cross: it exists to exercise the pipeline end to end, it is not a tested or
+    profitable strategy.
     """
     if len(closes) < SLOW_PERIOD + 1:
-        return None
+        return None, "not enough candles"
     fast, slow = sma(closes, FAST_PERIOD), sma(closes, SLOW_PERIOD)
     if fast[-2] <= slow[-2] and fast[-1] > slow[-1]:
-        return "buy"
+        return "buy", "fast MA crossed above slow MA"
     if fast[-2] >= slow[-2] and fast[-1] < slow[-1]:
-        return "sell"
-    return None
+        return "sell", "fast MA crossed below slow MA"
+    return None, "no MA cross"

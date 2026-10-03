@@ -12,6 +12,7 @@ from pathlib import Path
 
 import MetaTrader5 as mt5
 
+import ai_strategy
 import strategy
 
 ENV_PATH = Path(__file__).with_name(".env")
@@ -19,6 +20,8 @@ POLL_SECONDS = 5
 SECONDS_PER_DAY = 86400
 DEFAULTS = {
     "MODE": "dry",
+    "BRAIN": "rules",
+    "ANTHROPIC_API_KEY": "",
     "SYMBOL": "XAUUSD",
     "TIMEFRAME": "M15",
     "LOT": "0.01",
@@ -52,6 +55,8 @@ def load_config(env_path=ENV_PATH):
         config[key] = convert(config[key])
     if config["MODE"] not in ("dry", "demo", "live"):
         raise SystemExit(f"MODE must be dry, demo or live, got {config['MODE']!r}")
+    if config["BRAIN"] not in ("rules", "ai"):
+        raise SystemExit(f"BRAIN must be rules or ai, got {config['BRAIN']!r}")
     if min(config["LOT"], config["SL_POINTS"], config["TP_POINTS"], config["MAX_DAILY_LOSS"]) <= 0:
         raise SystemExit("LOT, SL_POINTS, TP_POINTS and MAX_DAILY_LOSS must all be above 0")
     for constant in ("TIMEFRAME_" + config["TIMEFRAME"], "ORDER_FILLING_" + config["FILLING"]):
@@ -191,17 +196,20 @@ def status_text(config, state):
     tick = mt5.symbol_info_tick(config["SYMBOL"])
     pnl = f"{pnl_today(tick.time):.2f}" if tick else "unknown"
     return (
-        f"mode={config['MODE']} paused={state['paused']} symbol={config['SYMBOL']} "
-        f"open_positions={len(open_positions(config))} pnl_today={pnl}"
+        f"mode={config['MODE']} brain={config['BRAIN']} paused={state['paused']} "
+        f"symbol={config['SYMBOL']} open_positions={len(open_positions(config))} pnl_today={pnl} "
+        f"last_decision={state.get('last_decision', 'none yet')}"
     )
 
 
-def place_order(side, tick, symbol_info, config):
+def place_order(side, tick, symbol_info, config, reason=""):
     request = build_order(side, tick, symbol_info, config)
     summary = (
         f"{side} {request['volume']} {request['symbol']} @ {request['price']} "
         f"sl {request['sl']} tp {request['tp']}"
     )
+    if reason:
+        summary += f" [{reason}]"
     if config["MODE"] == "dry":
         notify(config, "[dry] would " + summary)
         return
@@ -220,10 +228,17 @@ def place_order(side, tick, symbol_info, config):
         notify(config, "opened " + summary)
 
 
+def remember(state, decision):
+    """Keep the latest decision for /status and the console log."""
+    state["last_decision"] = decision
+    print(datetime.now().strftime("%H:%M:%S"), decision)
+
+
 def check_market(config, state):
-    """Evaluate the strategy once per newly closed candle."""
+    """Ask the brain once per newly closed candle."""
+    brain = ai_strategy if config["BRAIN"] == "ai" else strategy
     timeframe = getattr(mt5, "TIMEFRAME_" + config["TIMEFRAME"])
-    rates = mt5.copy_rates_from_pos(config["SYMBOL"], timeframe, 0, strategy.CANDLES_NEEDED + 1)
+    rates = mt5.copy_rates_from_pos(config["SYMBOL"], timeframe, 0, brain.CANDLES_NEEDED + 1)
     if rates is None or len(rates) < 2:
         return
     closed_candles = rates[:-1]  # the last row is still forming
@@ -234,22 +249,22 @@ def check_market(config, state):
     state["last_candle_time"] = candle_time
     if first_look:
         return  # never trade a candle that closed before the bot started
-    signal = strategy.decide([float(candle["close"]) for candle in closed_candles])
-    if not signal:
-        return
     tick = mt5.symbol_info_tick(config["SYMBOL"])
     symbol_info = mt5.symbol_info(config["SYMBOL"])
     if tick is None or symbol_info is None:
-        notify(config, f"{signal} signal skipped: no price from MT5")
-        return
+        return remember(state, "skipped: no price from MT5")
     spread_points = round((tick.ask - tick.bid) / symbol_info.point)
-    reason = block_reason(
+    blocked = block_reason(
         state["paused"], len(open_positions(config)), pnl_today(tick.time), spread_points, config
     )
-    if reason:
-        notify(config, f"{signal} signal skipped: {reason}")
-        return
-    place_order(signal, tick, symbol_info, config)
+    if blocked:
+        return remember(state, "skipped: " + blocked)  # checked first: a blocked candle costs no AI call
+    signal, reason = brain.decide([float(candle["close"]) for candle in closed_candles], config)
+    remember(state, f"{signal or 'hold'}: {reason}")
+    if signal:
+        # the AI call can take a while, so price the order from a fresh tick
+        fresh_tick = mt5.symbol_info_tick(config["SYMBOL"]) or tick
+        place_order(signal, fresh_tick, symbol_info, config, reason)
 
 
 def main():

@@ -5,12 +5,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import ai_strategy
 import bot
 import indicators
 import strategy
 
 CONFIG = {
     "MODE": "demo",
+    "BRAIN": "rules",
+    "ANTHROPIC_API_KEY": "",
     "SYMBOL": "XAUUSD",
     "TIMEFRAME": "M15",
     "LOT": 0.01,
@@ -35,12 +38,57 @@ def candles(closes):
 
 class StrategyTest(unittest.TestCase):
     def test_cross_up_buys_cross_down_sells(self):
-        self.assertEqual(strategy.decide([100] * 30 + [110]), "buy")
-        self.assertEqual(strategy.decide([100] * 30 + [90]), "sell")
+        self.assertEqual(strategy.decide([100] * 30 + [110])[0], "buy")
+        self.assertEqual(strategy.decide([100] * 30 + [90])[0], "sell")
 
     def test_no_cross_or_too_little_data_gives_nothing(self):
-        self.assertIsNone(strategy.decide([100] * 31))
-        self.assertIsNone(strategy.decide([100, 110]))
+        self.assertIsNone(strategy.decide([100] * 31)[0])
+        self.assertIsNone(strategy.decide([100, 110])[0])
+
+
+class AiBrainTest(unittest.TestCase):
+    CLOSES = [2000 + index * 0.5 for index in range(ai_strategy.CANDLES_NEEDED)]
+
+    def ask(self, reply_text='{"action": "buy", "reason": "trend up"}', stop_reason="end_turn", error=None):
+        response = SimpleNamespace(stop_reason=stop_reason, content=[
+            SimpleNamespace(type="thinking", thinking=""),
+            SimpleNamespace(type="text", text=reply_text),
+        ])
+        with mock.patch.object(ai_strategy.anthropic, "Anthropic") as client_class:
+            create = client_class.return_value.beta.messages.create
+            create.return_value = response
+            create.side_effect = error
+            return ai_strategy.decide(self.CLOSES, CONFIG), create
+
+    def test_decision_passes_through_with_its_reason(self):
+        decision, create = self.ask()
+        self.assertEqual(decision, ("buy", "AI: trend up"))
+        request = create.call_args.kwargs
+        self.assertEqual(request["model"], "claude-opus-5-5")
+        self.assertIn("symbol: XAUUSD", request["messages"][0]["content"])
+        self.assertIn("rsi_14: ", request["messages"][0]["content"])
+
+    def test_hold_means_no_signal(self):
+        decision, _ = self.ask('{"action": "hold", "reason": "choppy"}')
+        self.assertEqual(decision, (None, "AI: choppy"))
+
+    def test_every_failure_holds(self):
+        api_error = ai_strategy.anthropic.APIConnectionError
+        failures = (
+            {"stop_reason": "refusal"},
+            {"stop_reason": "max_tokens"},
+            {"reply_text": "not json"},
+            {"reply_text": '{"action": "buy"}'},
+            {"error": api_error.__new__(api_error)},
+            {"error": TypeError("no credentials")},
+        )
+        for failure in failures:
+            self.assertIsNone(self.ask(**failure)[0][0], msg=failure)
+
+    def test_too_few_candles_skips_the_api_call(self):
+        with mock.patch.object(ai_strategy.anthropic, "Anthropic") as client_class:
+            self.assertIsNone(ai_strategy.decide([1.0] * 10, CONFIG)[0])
+        client_class.assert_not_called()
 
 
 class IndicatorTest(unittest.TestCase):
@@ -147,15 +195,16 @@ class OrderTest(unittest.TestCase):
 
 
 class CheckMarketTest(unittest.TestCase):
-    def run_check(self, rates, state):
+    def run_check(self, rates, state, config=CONFIG):
         with mock.patch.object(bot.mt5, "copy_rates_from_pos", return_value=rates), \
+                mock.patch("builtins.print"), \
                 mock.patch.object(bot.mt5, "symbol_info_tick", return_value=TICK), \
                 mock.patch.object(bot.mt5, "symbol_info", return_value=GOLD), \
                 mock.patch.object(bot.mt5, "positions_get", return_value=()), \
                 mock.patch.object(bot.mt5, "history_deals_get", return_value=()), \
                 mock.patch.object(bot, "notify"), \
                 mock.patch.object(bot, "place_order") as place_order:
-            bot.check_market(CONFIG, state)
+            bot.check_market(config, state)
         return place_order
 
     def test_trades_only_candles_that_close_while_running(self):
@@ -169,6 +218,17 @@ class CheckMarketTest(unittest.TestCase):
     def test_paused_bot_does_not_order(self):
         state = {"paused": True, "last_candle_time": -1}
         self.run_check(candles([100] * 30 + [110, 110]), state).assert_not_called()
+        self.assertEqual(state["last_decision"], "skipped: paused")
+
+    def test_ai_brain_is_asked_only_when_a_trade_is_allowed(self):
+        ai_config = dict(CONFIG, BRAIN="ai")
+        rates = candles([100.0] * 5)
+        with mock.patch.object(bot.ai_strategy, "decide", return_value=("sell", "AI: weak")) as decide:
+            self.run_check(rates, {"paused": True, "last_candle_time": -1}, ai_config).assert_not_called()
+            decide.assert_not_called()  # a blocked candle must not cost an API call
+            place_order = self.run_check(rates, {"paused": False, "last_candle_time": -1}, ai_config)
+        decide.assert_called_once()
+        self.assertEqual((place_order.call_args.args[0], place_order.call_args.args[4]), ("sell", "AI: weak"))
 
 
 class TelegramTest(unittest.TestCase):
@@ -202,7 +262,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((config["SYMBOL"], config["LOT"], config["MODE"]), ("GOLD", 0.02, "dry"))
 
     def test_bad_settings_stop_the_bot(self):
-        for text in ("MODE=yolo", "SL_POINTS=0", "TIMEFRAME=M7", "FILLING=NOPE"):
+        for text in ("MODE=yolo", "BRAIN=robot", "SL_POINTS=0", "TIMEFRAME=M7", "FILLING=NOPE"):
             with self.assertRaises(SystemExit, msg=text):
                 self.load(text)
 
