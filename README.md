@@ -24,9 +24,21 @@ report.py  <------------------------------------------+
 | `export_history.py` | ดึงแท่งจาก MT5 เป็น CSV (รันบน Windows ที่เปิด MT5) |
 | `report.py` | สรุปผล: win rate, กำไร, drawdown, ค่า API, playbook, บทเรียนล่าสุด |
 | `config.py` `indicators.py` | ตั้งค่าจาก .env และอินดิเคเตอร์ Python ล้วน |
+| `start.bat` `train.bat` | ดับเบิลคลิกบน Windows: รันบอท / ฝึก AI (`setup.bat` เตรียมสภาพแวดล้อมให้ทั้งคู่) |
 | `DECISIONS.md` | ทำไมถึงเลือกทางนี้ |
 
-## เริ่มใช้ (Windows ที่มี MT5 เปิดและ login แล้ว)
+## เริ่มใช้แบบกดจิ้ม (Windows ที่มี MT5 เปิดและ login แล้ว)
+
+ต้องมี Python 3.10 ขึ้นไปจาก python.org (ติ๊ก "Add to PATH" ตอนลง) แค่นั้น
+
+- ดับเบิลคลิก **`start.bat`** รันบอท รอบแรกมันจะสร้าง `.env` แล้วเปิด Notepad ให้กรอก พอเซฟปิดบอทก็เริ่มเอง
+- ดับเบิลคลิก **`train.bat`** ฝึก AI ครบลูป: ดึงแท่งจาก MT5, replay บนกระดาษจนครบงบ, แล้วโชว์รายงาน
+
+ทั้งสองไฟล์สร้าง `.venv` และลง library ให้เอง ปิดหน้าต่างหรือกด Ctrl+C เพื่อหยุด
+
+ค่าเริ่มต้นคือ `MODE=dry` และ `BRAIN=rules`: ไม่ส่งอะไรให้โบรก ไม่เสียค่า API
+
+แบบพิมพ์เองถ้าชอบ:
 
 ```
 pip install -r requirements.txt
@@ -35,9 +47,9 @@ python -m unittest          # ไม่ต้องมี MT5 ก็รันไ
 python bot.py
 ```
 
-ค่าเริ่มต้นคือ `MODE=dry` และ `BRAIN=rules`: ไม่ส่งอะไรให้โบรก ไม่เสียค่า API
-
 ## ให้ AI ฝึกก่อนใช้เงินจริง
+
+`train.bat` ทำข้อ 1 ถึง 3 ให้ในคลิกเดียว หรือทำเองทีละขั้น:
 
 1. ดึงประวัติ: `python export_history.py --days 90` (ได้ `history.csv` และบอก contract size ของโบรกให้ตรวจ `CONTRACT_SIZE`)
 2. ฝึกเร็วบนกระดาษ: `python replay.py history.csv --brain ai --budget 5` หยุดเองเมื่อครบงบ
