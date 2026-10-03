@@ -1,2 +1,5 @@
 .env
 __pycache__/
+journal.db
+journal.db-journal
+*.csv
