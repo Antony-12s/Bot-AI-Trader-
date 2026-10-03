@@ -1,12 +1,14 @@
-"""Trading signal. This is the only file to edit when changing the strategy."""
+"""Trading signal. This is the only file to edit when changing the strategy.
+
+Building blocks live in indicators.py: sma, ema, rsi, macd, bollinger.
+"""
+from indicators import sma
 
 FAST_PERIOD = 10
 SLOW_PERIOD = 30
+# How many closed candles the bot fetches for decide(). Raise it when using
+# ema / rsi / macd: they need 3-4x their period to settle.
 CANDLES_NEEDED = SLOW_PERIOD + 1
-
-
-def average(values):
-    return sum(values) / len(values)
 
 
 def decide(closes):
@@ -15,13 +17,11 @@ def decide(closes):
     Sample moving-average cross. It exists to exercise the pipeline end to end,
     it is not a tested or profitable strategy.
     """
-    if len(closes) < CANDLES_NEEDED:
+    if len(closes) < SLOW_PERIOD + 1:
         return None
-    fast_now, slow_now = average(closes[-FAST_PERIOD:]), average(closes[-SLOW_PERIOD:])
-    fast_before = average(closes[-FAST_PERIOD - 1:-1])
-    slow_before = average(closes[-SLOW_PERIOD - 1:-1])
-    if fast_before <= slow_before and fast_now > slow_now:
+    fast, slow = sma(closes, FAST_PERIOD), sma(closes, SLOW_PERIOD)
+    if fast[-2] <= slow[-2] and fast[-1] > slow[-1]:
         return "buy"
-    if fast_before >= slow_before and fast_now < slow_now:
+    if fast[-2] >= slow[-2] and fast[-1] < slow[-1]:
         return "sell"
     return None

@@ -19,4 +19,10 @@
 - ไม่เทรดแท่งที่ปิดก่อน bot เริ่มรัน กันเข้าไม้ช้า
 - ออเดอร์ fail แล้วไม่ยิงซ้ำ รอสัญญาณรอบถัดไป
 - กลยุทธ์ MA cross ใน strategy.py เป็นแค่ตัวอย่างทดสอบระบบ ยังไม่เคย backtest
+- อินดิเคเตอร์ (sma, ema, rsi, macd, bollinger) เขียนเองด้วย Python ล้วนใน indicators.py
+  - เหตุผล: ตัวละไม่กี่บรรทัด ส่วน TA-Lib ต้อง build C บน Windows ซึ่งยุ่งเกินเหตุ
+  - ข้อแลก: ค่า MACD signal อาจต่างจากกราฟ MT5 เล็กน้อย เพราะ MT5 ใช้วิธี smooth คนละแบบ
+  - ยังไม่มี ATR / Stochastic เพราะต้องใช้ high/low ตอนนี้ bot ส่งให้กลยุทธ์แค่ราคาปิด
+- ดู repo HKUDS/AI-Trader แล้ว ไม่ได้นำมาใช้
+  - เหตุผล: เป็นเว็บแพลตฟอร์มชุมชน/paper trading (ai4trade.ai) ไม่มีโค้ดอินดิเคเตอร์ กลยุทธ์ backtest หรือ MT5
 - ยังไม่ทำ: backtest, /closeall, trailing stop, หลาย symbol, lot ตาม % ทุน, รันบน VPS
