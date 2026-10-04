@@ -98,7 +98,7 @@ python replay.py history.csv --compare
 - รัน test ในเครื่องที่ไม่ใช่ Windows: `PYTHONPATH=tests_support python -m unittest` (โฟลเดอร์ `tests_support` มีตัวแทน MetaTrader5 ให้ import ได้)
 - `.env` (มี API key, Telegram token) และ `journal.db` เป็นของใครของมัน อยู่ใน `.gitignore` ห้าม commit เด็ดขาด
 - อยากให้ AI ของเพื่อนร่วมทีมเริ่มจากประสบการณ์เดียวกัน: ก๊อป `journal.db` ให้กันตรงๆ ได้ มันคือไฟล์เดียว
-- push แล้วโดน 403 หรือ "Permission denied to <ชื่อคนอื่น>": เครื่องจำ login GitHub บัญชีอื่นไว้ ดับเบิลคลิก `fix_github_login.bat` มันล้าง login เก่าแล้วให้ login ใหม่ใน browser ด้วยบัญชีที่ถูกเชิญ (404 = URL ผิด สังเกตขีดท้ายชื่อ `Bot-AI-Trader-` หรือยังไม่กดรับคำเชิญ)
+- push แล้วโดน 403 หรือ "Permission denied to <ชื่อคนอื่น>": เครื่องจำ login GitHub บัญชีอื่นไว้ Windows ดับเบิลคลิก `fix_github_login.bat` / Mac เปิด Terminal แล้ว `sh fix_github_login.sh` มันล้าง login เก่าแล้วให้ login ใหม่ด้วยบัญชีที่ถูกเชิญ (404 = URL ผิด สังเกตขีดท้ายชื่อ `Bot-AI-Trader-` หรือยังไม่กดรับคำเชิญ)
 
 ## รัน 24 ชั่วโมงบน Windows VPS ไม่ต้องมีคนเฝ้า
 
