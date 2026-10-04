@@ -1,0 +1,28 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    name: unit tests (Linux, MetaTrader5 stand-in)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install anthropic
+      - run: PYTHONPATH=tests_support python -m unittest -v
+
+  windows:
+    name: unit tests (Windows, real MetaTrader5 package)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m unittest -v
