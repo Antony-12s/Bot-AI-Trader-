@@ -33,6 +33,7 @@ from risk import account_error, block_reason, day_start, stop_distances, stop_le
 POLL_SECONDS = 5
 STALE_CANDLES = 2  # a candle that closed this many candle lengths ago is old news (market was shut)
 STOP_FLAG = Path(__file__).with_name("stop.flag")  # /stop leaves this so run_forever.bat does not restart the bot
+PAUSE_FLAG = Path(__file__).with_name("pause.flag")  # dashboard.py creates this to pause, removes it to resume
 
 
 def load_config(env_path=ENV_PATH):
@@ -93,11 +94,11 @@ def handle_command(text, config, state):
     command = text.strip().split("@")[0].lower()
     journal = state.get("journal")
     if command == "/pause":
-        state["paused"] = True
+        state["paused"] = state["telegram_paused"] = True
         return "paused: no new trades (open positions keep their SL/TP)"
     if command == "/resume":
-        state["paused"] = False
-        return "resumed"
+        state["paused"] = state["telegram_paused"] = False
+        return "resumed" if not PAUSE_FLAG.exists() else "resumed on Telegram, but the dashboard still holds the pause"
     if command == "/stop":
         state["stopping"] = True
         return "stopping: the bot exits now and the watchdog will not restart it (open positions keep their SL/TP)"
@@ -112,6 +113,12 @@ def handle_command(text, config, state):
             return "no lessons yet"
         return "\n".join(f"({t['side']} {t['outcome']} {t['profit']:+.2f}) {t['lesson']}" for t in lessons)
     return None
+
+
+def apply_flags(state):
+    """Let the dashboard's files pause or stop the bot alongside Telegram. Returns True to stop."""
+    state["paused"] = bool(state.get("telegram_paused")) or PAUSE_FLAG.exists()
+    return bool(state.get("stopping")) or STOP_FLAG.exists()
 
 
 def read_commands(config, state, skip_only=False):
@@ -382,7 +389,8 @@ def main():
         if error:
             raise SystemExit(error)
         state = {
-            "paused": False,
+            "paused": PAUSE_FLAG.exists(),
+            "telegram_paused": False,
             "last_candle_time": None,
             "update_offset": 0,
             "journal": journal,
@@ -392,15 +400,17 @@ def main():
             STOP_FLAG.unlink()
         read_commands(config, state, skip_only=True)
         notify(config, "bot started: " + status_text(config, state))
-        while not state.get("stopping"):
+        while True:
             read_commands(config, state)
+            if apply_flags(state):
+                break
             if ensure_connected(config, state):
                 if config["MODE"] != "dry":
                     settle_mt5(config, state)
                 check_market(config, state)
             time.sleep(POLL_SECONDS)
         STOP_FLAG.touch()
-        notify(config, "bot stopped by /stop")
+        notify(config, "bot stopped by /stop or the dashboard")
     except KeyboardInterrupt:
         notify(config, "bot stopped")
     except Exception as error:

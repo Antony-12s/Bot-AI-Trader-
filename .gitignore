@@ -5,3 +5,4 @@ journal.db-journal
 *.csv
 stop.flag
 .venv/
+pause.flag

@@ -303,6 +303,25 @@ class SettleMt5Test(unittest.TestCase):
         self.assertEqual(self.settle((), ()).closed_trades(), [])
 
 
+class FlagTest(unittest.TestCase):
+    def test_dashboard_files_pause_and_stop_the_bot(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pause, stop = Path(folder, "pause.flag"), Path(folder, "stop.flag")
+            with mock.patch.object(bot, "PAUSE_FLAG", pause), mock.patch.object(bot, "STOP_FLAG", stop):
+                state = {"telegram_paused": False}
+                self.assertFalse(bot.apply_flags(state))
+                self.assertFalse(state["paused"])
+                pause.touch()
+                self.assertFalse(bot.apply_flags(state))
+                self.assertTrue(state["paused"])
+                pause.unlink()
+                state["telegram_paused"] = True
+                bot.apply_flags(state)
+                self.assertTrue(state["paused"])  # Telegram's pause holds on its own
+                stop.touch()
+                self.assertTrue(bot.apply_flags(state))
+
+
 class ConnectionTest(unittest.TestCase):
     def test_lost_and_recovered_connection_are_reported_once_each(self):
         state = {}
@@ -333,7 +352,7 @@ class TelegramTest(unittest.TestCase):
         return state, notify
 
     def test_owner_can_pause(self):
-        self.assertEqual(self.read(111, "/pause")[0], {"paused": True, "update_offset": 6})
+        self.assertEqual(self.read(111, "/pause")[0], {"paused": True, "telegram_paused": True, "update_offset": 6})
 
     def test_stranger_is_ignored(self):
         self.assertFalse(self.read(999, "/pause")[0]["paused"])

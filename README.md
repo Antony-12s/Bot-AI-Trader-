@@ -26,6 +26,7 @@ report.py  <------------------------------------------+
 | `report.py` | สรุปผล: win rate, กำไร, drawdown, ค่า API, playbook, บทเรียนล่าสุด |
 | `config.py` `indicators.py` | ตั้งค่าจาก .env และอินดิเคเตอร์ Python ล้วน |
 | `start.bat` `train.bat` `settings.bat` | ดับเบิลคลิกบน Windows: รันบอท / ฝึก AI / แก้ค่า (`setup.bat` เตรียมสภาพแวดล้อมให้) |
+| `dashboard.bat` `dashboard.py` | หน้าต่างควบคุม: สถานะ MT5, ราคา, ปุ่ม Start/Stop/Pause, สถิติ, log (สั่งบอทผ่าน `pause.flag` / `stop.flag`) |
 | `wizard.py` | ถาม-ตอบรอบแรก อ่าน symbol, contract size, filling จาก MT5 แล้วเขียน `.env` ให้ |
 | `run_forever.bat` `install_autostart.bat` | สำหรับ VPS: watchdog รีสตาร์ทบอทเองตอน crash และตั้งให้รันตอน login |
 | `DECISIONS.md` | ทำไมถึงเลือกทางนี้ |
@@ -40,6 +41,7 @@ report.py  <------------------------------------------+
 
 ค่าเริ่มต้นคือ `MODE=dry`: paper trading ไม่ส่งอะไรให้โบรก ไม่มีเงินจริงขยับ จนกว่ามุงจะแก้ `MODE` ใน `.env` เอง
 
+- **`dashboard.bat`** หน้าต่างเดียวจบ: ไฟเขียว/แดงว่าต่อ MT5 ติดไหม, ราคาสด, ปุ่ม Start / Stop / Pause / Report / Train / Settings, สถิติ, playbook, log ของบอท MT5 ย่อทิ้งไว้ได้เลย
 - **`train.bat`** ฝึก AI ครบลูป: ดึงแท่งจาก MT5, เทียบกลยุทธ์ฟรี, replay บนกระดาษจนครบงบ, โชว์รายงาน
 - ทุก .bat สร้าง `.venv` และลง library ให้เอง ปิดหน้าต่างหรือ Ctrl+C เพื่อหยุด
 
