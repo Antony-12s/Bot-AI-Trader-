@@ -85,7 +85,7 @@ class FakeBroker:
     def open_positions(self, name, magic):
         return self.positions_data
 
-    def position_result(self, position_id):
+    def position_result(self, position_id, trade=None):
         return self.results.get(position_id)
 
     def realized_since(self, server_time):

@@ -120,7 +120,7 @@ def main():
     light = tk.Canvas(status, width=18, height=18, highlightthickness=0)
     light.pack(side="left")
     dot = light.create_oval(2, 2, 16, 16, fill="grey")
-    connection = tk.Label(status, text="MT5: connecting ...", anchor="w", font=("Segoe UI", 10))
+    connection = tk.Label(status, text=f"{config['BROKER']}: connecting ...", anchor="w", font=("Segoe UI", 10))
     connection.pack(side="left", padx=8)
     price = tk.Label(root, text="", anchor="w", font=("Consolas", 11), padx=10)
     price.pack(fill="x")

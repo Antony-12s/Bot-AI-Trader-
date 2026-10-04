@@ -126,3 +126,19 @@
   - position_result() คืนผลไม้ที่ปิดเป็น dict กลางๆ (exit, closed_at, profit, outcome) แต่ละแพลตฟอร์มแปลงเอง
   - journal.source ของไม้จริงใช้ชื่อโบรก ("mt5", ต่อไป "ctrader") ส่วน paper/replay เหมือนเดิม
 - test ของ bot ใช้ FakeBroker แทน mock MetaTrader5 ทีละฟังก์ชัน: อ่านง่ายขึ้นและใช้กับโบรกไหนก็ได้ ส่วน MT5 จริงมี test_broker_mt5.py ของตัวเอง
+
+## 2026-10-04 (ค่ำ) สาย cTrader Open API
+
+- broker_ctrader.py คุยกับ gateway ของ Spotware ตรง (TLS socket, frame = ความยาว 4 byte + ProtoMessage) ใช้จาก package ctrader-open-api แค่ไฟล์ protobuf ไม่ใช้ client แบบ Twisted ของมัน
+  - เหตุผล: บอท poll ทุก 5 วินาทีอยู่แล้ว thread อ่าน 1 ตัว + thread heartbeat 1 ตัว พอ ไม่ต้องลาก reactor loop เข้ามาในลูปหลัก
+  - ข้อแลก: เขียน framing/จับคู่ clientMsgId เอง (ประมาณ 100 บรรทัด มี test)
+- ราคาสดมาจาก spot subscription ไม่มี "ขอ tick" ใน API จึงเก็บ bid/ask ล่าสุดไว้ใน Client และ subscribe ซ้ำเองหลังหลุด
+- แท่งจาก GetTrendbars อาจจบที่แท่งปิดล่าสุด จึงเติมแท่งที่กำลังก่อตัวจาก quote ให้เอง เพราะ bot.py ถือว่าแท่งสุดท้ายคือแท่งที่ยังไม่ปิดเสมอ
+- SL/TP ส่งเป็นระยะสัมพัทธ์ (relativeStopLoss/TakeProfit) เพราะ market order ของ cTrader ไม่รับราคา SL/TP ตรงๆ
+- ดีลของ cTrader ไม่บอกว่าปิดด้วย SL หรือ TP position_result() จึงรับแถว journal (sl, tp) มาเทียบว่าราคาปิดชิดข้างไหน (ภายใน 1/5 ของช่วง SL-TP) ไม่งั้นเป็น closed
+  - interface ของ brokers.py จึงเปลี่ยนเป็น position_result(position_id, trade); MT5 ไม่ใช้ trade
+- magic number ของ MT5 แทนด้วย label ของออเดอร์ (ข้อความ) ใช้คัดไม้ของบอทเหมือนเดิม
+- ค่าคอม/swap: บวกตามเครื่องหมายที่ gateway ส่งมา (เชื่อว่าค่าใช้จ่ายเป็นลบ) ยังไม่ได้ยืนยันกับ gateway จริง จึงเขียนไว้ใน docs ให้เทียบไม้ demo แรก
+- ctrader_auth.py ทำ OAuth ด้วย stdlib: เปิด browser, รับ redirect ที่ localhost:8765, แลก code เป็น token, เลือกบัญชี, เขียน .env; บอท refresh token เองเมื่อหมดอายุและเขียนกลับ .env
+- requirements.txt ติด marker ให้ MetaTrader5 ลงเฉพาะ Windows เพื่อให้ `pip install -r requirements.txt` ผ่านบน Mac/Linux และเพิ่ม start.sh / train.sh คู่กับ .bat
+- ทั้งสายนี้ยังไม่ได้ทดสอบกับ demo.ctraderapi.com จริง (เครื่องพัฒนาออกเน็ตไปไม่ถึง) test ใช้ FakeClient ที่ตอบ protobuf จริง สิ่งที่ยังไม่ชัวร์ถูกเขียนไว้ใน docs/ctrader.md

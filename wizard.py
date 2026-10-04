@@ -1,14 +1,16 @@
 """First-run setup: a few questions, the rest is read from the broker, then .env is written.
 
-start.bat and train.bat run this when .env is missing; settings.bat runs it any time.
-Enter accepts the value shown in brackets. Nothing here sends an order or spends money:
-the result is always MODE=dry (paper trading) until MODE is changed by hand.
+start.bat / start.sh and train.bat / train.sh run this when .env is missing; settings.bat
+runs it any time. Enter accepts the value shown in brackets. Nothing here sends an order or
+spends money: the result is always MODE=dry (paper trading) until MODE is changed by hand.
 """
 import getpass
 import sys
 
 import brokers
-from config import ENV_PATH, TIMEFRAME_SECONDS, load_config
+from config import CTRADER_TIMEFRAMES, ENV_PATH, TIMEFRAME_SECONDS, load_config, save_env_values
+
+CTRADER_KEYS = ("CTRADER_ENV", "CTRADER_CLIENT_ID", "CTRADER_CLIENT_SECRET", "CTRADER_ACCESS_TOKEN", "CTRADER_REFRESH_TOKEN", "CTRADER_ACCOUNT_ID")
 
 TEMPLATE_PATH = ENV_PATH.with_name(".env.example")
 
@@ -73,16 +75,42 @@ def chat_ids(updates):
     return seen
 
 
+def default_broker(platform=sys.platform, config=None):
+    """mt5 on Windows unless .env already says cTrader; cTrader everywhere else (MT5's package is Windows only)."""
+    if config and config.get("BROKER") == "ctrader":
+        return "ctrader"
+    return "mt5" if platform.startswith("win") else "ctrader"
+
+
+def choose_broker(config):
+    print("Where does the bot trade?")
+    print("  1. MetaTrader 5   (this Windows machine, terminal open and logged in)")
+    print("  2. cTrader        (Open API over the internet, any OS; needs a cTrader broker account)")
+    answer = ask("Pick a number", "1" if default_broker(config=config) == "mt5" else "2")
+    return "ctrader" if answer.strip() == "2" else "mt5"
+
+
+def ctrader_login(config):
+    """Make sure .env holds cTrader tokens; runs ctrader_auth.py's flow when it does not. Returns the fresh config."""
+    if config["CTRADER_ACCESS_TOKEN"] and config["CTRADER_ACCOUNT_ID"]:
+        return config
+    import ctrader_auth
+
+    print("\nFirst the bot needs to be logged into your cTrader ID (once).")
+    ctrader_auth.main()
+    return load_config()
+
+
 def choose_symbol(broker):
     candidates = gold_like(broker.symbols())
     if candidates:
-        print("Gold at this broker (any other symbol works too: EURUSD, GBPUSD, BTCUSD, US30 ... as Market Watch spells it):")
+        print("Gold at this broker (any other symbol works too: EURUSD, GBPUSD, BTCUSD, US30 ... as the broker spells it):")
         for index, name in enumerate(candidates[:9], 1):
             print(f"  {index}. {name}")
-        answer = ask("Pick a number, or type another symbol name exactly as Market Watch shows it", "1")
+        answer = ask("Pick a number, or type another symbol name exactly as the broker shows it", "1")
         name = candidates[int(answer) - 1] if answer.isdigit() and 1 <= int(answer) <= len(candidates[:9]) else answer
     else:
-        name = ask("Symbol name exactly as Market Watch shows it", "XAUUSD")
+        name = ask("Symbol name exactly as the broker shows it", "XAUUSD")
     if not broker.select_symbol(name) or broker.symbol(name) is None:
         print(f"  {name} is not a symbol at this broker, try again")
         return choose_symbol(broker)
@@ -138,7 +166,14 @@ def ask_telegram():
 
 def main():
     print("Bot AI Trader setup. Enter accepts the value in brackets.\n")
-    broker = brokers.load(load_config())
+    config = load_config()
+    config["BROKER"] = choose_broker(config)
+    values = {"BROKER": config["BROKER"]}
+    if config["BROKER"] == "ctrader":
+        config = ctrader_login(config)
+        config["BROKER"] = "ctrader"
+        values.update({key: config[key] for key in CTRADER_KEYS})
+    broker = brokers.load(config)
     if not broker.connect():
         print(broker.connection_hint())
         return 1
@@ -149,23 +184,24 @@ def main():
             print(f"{broker.name} account {account.login} at {account.server} ({kind})\n")
         symbol = choose_symbol(broker)
         info = broker.symbol(symbol)
-        values = {
+        values.update({
             "SYMBOL": symbol,
             "CONTRACT_SIZE": f"{info.contract_size:g}",
             "FILLING": info.filling,
             "MAX_SPREAD_POINTS": str(spread_limit(info.spread_points)),
-        }
+        })
         print(
             f"\n{symbol}: contract size {values['CONTRACT_SIZE']}, {info.digits} decimals,"
             f" minimum lot {info.min_lot:g}, filling {values['FILLING']}, spread now {info.spread_points} points"
             f" so MAX_SPREAD_POINTS={values['MAX_SPREAD_POINTS']} (all read from the broker)\n"
         )
         values["LOT"] = ask_number("Lot size per trade", f"{info.min_lot:g}")
+        timeframes = CTRADER_TIMEFRAMES if config["BROKER"] == "ctrader" else tuple(TIMEFRAME_SECONDS)
         while True:
             values["TIMEFRAME"] = ask("Timeframe (M5 M15 M30 H1 H4)", "M15").upper()
-            if values["TIMEFRAME"] in TIMEFRAME_SECONDS:
+            if values["TIMEFRAME"] in timeframes:
                 break
-            print("  use one of: " + " ".join(TIMEFRAME_SECONDS))
+            print("  use one of: " + " ".join(timeframes))
         values["MAX_DAILY_LOSS"] = ask_number("Stop opening trades for the day after losing this much (account currency)", "20")
         if yes("\nLet Claude (AI) judge the trades? Needs an API key from platform.claude.com, billed per use"):
             key = ask_api_key()
@@ -180,7 +216,7 @@ def main():
         ENV_PATH.write_text(render_env(TEMPLATE_PATH.read_text(encoding="utf-8"), values), encoding="utf-8")
         print(f"\nSaved {ENV_PATH.name}.")
         print("MODE=dry: paper trading only. Nothing goes to the broker and no real money moves")
-        print("until you change MODE to demo or live in .env yourself. Run settings.bat to redo this.")
+        print("until you change MODE to demo or live in .env yourself. Run settings.bat (python wizard.py) to redo this.")
         return 0
     finally:
         broker.shutdown()

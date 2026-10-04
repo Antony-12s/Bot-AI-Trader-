@@ -29,6 +29,13 @@ DEFAULTS = {
     "FILLING": "IOC",
     "TELEGRAM_TOKEN": "",
     "TELEGRAM_CHAT_ID": "",
+    # BROKER=ctrader only; ctrader_auth.py fills these in
+    "CTRADER_ENV": "demo",
+    "CTRADER_CLIENT_ID": "",
+    "CTRADER_CLIENT_SECRET": "",
+    "CTRADER_ACCESS_TOKEN": "",
+    "CTRADER_REFRESH_TOKEN": "",
+    "CTRADER_ACCOUNT_ID": "",
 }
 NUMBER_TYPES = {
     "AI_BUDGET_USD": float,
@@ -49,6 +56,8 @@ TIMEFRAME_SECONDS = {
     "M15": 900, "M20": 1200, "M30": 1800, "H1": 3600, "H2": 7200, "H3": 10800, "H4": 14400,
     "H6": 21600, "H8": 28800, "H12": 43200, "D1": 86400, "W1": 604800, "MN1": 2592000,
 }
+# Candle lengths cTrader serves (MT5 has a few more: M6, M12, M20, H2, H3, H6, H8).
+CTRADER_TIMEFRAMES = ("M1", "M2", "M3", "M4", "M5", "M10", "M15", "M30", "H1", "H4", "H12", "D1", "W1", "MN1")
 FILLING_MODES = ("IOC", "FOK", "RETURN")
 
 
@@ -81,7 +90,35 @@ def load_config(env_path=ENV_PATH):
         raise SystemExit(f"unknown TIMEFRAME {config['TIMEFRAME']!r}, use one of {' '.join(TIMEFRAME_SECONDS)}")
     if config["FILLING"] not in FILLING_MODES:
         raise SystemExit(f"unknown FILLING {config['FILLING']!r}, use IOC, FOK or RETURN")
+    if config["BROKER"] == "ctrader":
+        if config["CTRADER_ENV"] not in ("demo", "live"):
+            raise SystemExit(f"CTRADER_ENV must be demo or live, got {config['CTRADER_ENV']!r}")
+        if config["CTRADER_ACCOUNT_ID"] and not config["CTRADER_ACCOUNT_ID"].isdigit():
+            raise SystemExit(f"CTRADER_ACCOUNT_ID must be a number (ctrader_auth.py prints it), got {config['CTRADER_ACCOUNT_ID']!r}")
+        if config["TIMEFRAME"] not in CTRADER_TIMEFRAMES:
+            raise SystemExit(f"cTrader has no {config['TIMEFRAME']} candles, use one of {' '.join(CTRADER_TIMEFRAMES)}")
     return config
+
+
+def save_env_values(values, env_path=ENV_PATH):
+    """Set KEY=value lines in .env, keeping every other line; a missing .env starts from .env.example."""
+    template = env_path.with_name(".env.example")
+    if env_path.exists():
+        text = env_path.read_text(encoding="utf-8")
+    elif template.exists():
+        text = template.read_text(encoding="utf-8")
+    else:
+        text = ""
+    lines, pending = [], dict(values)
+    for line in text.splitlines():
+        key, separator, _ = line.partition("=")
+        name = key.strip()
+        if separator and not key.lstrip().startswith("#") and name in pending:
+            lines.append(f"{name}={pending.pop(name)}")
+        else:
+            lines.append(line)
+    lines.extend(f"{name}={value}" for name, value in pending.items())
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def candle_seconds(config):

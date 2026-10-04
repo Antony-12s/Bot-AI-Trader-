@@ -10,7 +10,9 @@ Every broker offers the same small surface:
     candles(name, timeframe, count) -> [dict(time, open, high, low, close, spread), ...] | None
                                        oldest first, the last one still forming, spread in points
     open_positions(name, magic) -> list of this bot's open positions
-    position_result(position_id) -> dict(exit, closed_at, profit, outcome) | None while still open
+    position_result(position_id, trade) -> dict(exit, closed_at, profit, outcome) | None while still open
+                                       trade is the journal row (sl, tp, opened_at) for platforms
+                                       whose deals do not say whether SL or TP closed the position
     realized_since(server_time) -> float   closed result of every trade on the account since then
     market_order(side, name, lot, price, sl, tp, magic, filling) -> namespace(ok, position_id, detail)
 """
@@ -26,7 +28,7 @@ def load(config):
     if name == "ctrader":
         try:
             from broker_ctrader import CTraderBroker
-        except ImportError:
-            raise SystemExit("BROKER=ctrader needs broker_ctrader.py, which lives on the ctrader/open-api branch")
+        except ImportError as error:
+            raise SystemExit(f"BROKER=ctrader needs the ctrader-open-api package: pip install -r requirements.txt ({error})")
         return CTraderBroker(config)
     raise SystemExit(f"unknown BROKER {name!r}, use one of: {', '.join(BROKERS)}")

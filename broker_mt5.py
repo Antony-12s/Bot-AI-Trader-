@@ -82,8 +82,11 @@ class MT5Broker:
     def open_positions(self, name, magic):
         return [position for position in (mt5.positions_get(symbol=name) or ()) if position.magic == magic]
 
-    def position_result(self, position_id):
-        """How a position ended, from the broker's own deals; None while it is open or not yet in history."""
+    def position_result(self, position_id, trade=None):
+        """How a position ended, from the broker's own deals; None while it is open or not yet in history.
+
+        MT5 deals say whether SL or TP closed them, so the journal row (trade) is not needed here.
+        """
         if mt5.positions_get(ticket=position_id):
             return None
         deals = mt5.history_deals_get(position=position_id) or ()

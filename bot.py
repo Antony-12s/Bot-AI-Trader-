@@ -250,7 +250,7 @@ def settle_broker(config, state):
     if not journal:
         return
     for trade in journal.open_trades(broker.name):
-        result = broker.position_result(trade["position_id"])
+        result = broker.position_result(trade["position_id"], trade)
         if result:
             finish_trade(config, state, trade["id"], result["exit"], result["closed_at"], result["profit"], result["outcome"])
 

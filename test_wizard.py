@@ -9,6 +9,13 @@ class WizardTest(unittest.TestCase):
         self.assertEqual(wizard.spread_limit(30), 90)
         self.assertEqual(wizard.spread_limit(2400), 7200)  # a crypto CFD quoted in cents
 
+    def test_default_broker_follows_the_platform_unless_env_says_ctrader(self):
+        self.assertEqual(wizard.default_broker("win32"), "mt5")
+        self.assertEqual(wizard.default_broker("darwin"), "ctrader")
+        self.assertEqual(wizard.default_broker("linux"), "ctrader")
+        self.assertEqual(wizard.default_broker("win32", {"BROKER": "ctrader"}), "ctrader")
+        self.assertEqual(wizard.default_broker("darwin", {"BROKER": "mt5"}), "ctrader")
+
     def test_gold_like_symbols_plainest_first(self):
         names = ["EURUSD", "GOLDmicro", "GOLD", "XAUUSD.m", "XAUEUR", "US30"]
         self.assertEqual(wizard.gold_like(names), ["GOLD", "XAUEUR", "XAUUSD.m", "GOLDmicro"])

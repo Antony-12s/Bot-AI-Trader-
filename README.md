@@ -1,6 +1,6 @@
 # Bot AI Trader
 
-บอทเทรด Forex/ทอง บน MT5 ที่ให้ Claude เป็นคนตัดสินใจเองทั้งหมด และเรียนรู้จากไม้ที่ตัวเองเทรด
+บอทเทรด Forex/ทอง บน MT5 หรือ cTrader ที่ให้ Claude เป็นคนตัดสินใจเองทั้งหมด และเรียนรู้จากไม้ที่ตัวเองเทรด
 
 ```
 export_history.py  ->  history.csv  ->  replay.py  ---+
@@ -15,7 +15,8 @@ report.py  <------------------------------------------+
 | ไฟล์ | หน้าที่ |
 | --- | --- |
 | `bot.py` | ลูปหลัก: อ่านแท่งจากโบรก, ถามสมอง, ส่ง/จำลองออเดอร์, คุยกับ Telegram |
-| `brokers.py` `broker_mt5.py` | ชั้นโบรก: `BROKER=` ใน .env เลือกแพลตฟอร์ม ไฟล์เดียวที่แตะ MetaTrader5 คือ `broker_mt5.py` (cTrader กำลังทำบน branch `ctrader/open-api`) |
+| `brokers.py` `broker_mt5.py` `broker_ctrader.py` | ชั้นโบรก: `BROKER=` ใน .env เลือกแพลตฟอร์ม ไฟล์เดียวที่แตะ MetaTrader5 คือ `broker_mt5.py` ไฟล์เดียวที่คุยกับ cTrader Open API คือ `broker_ctrader.py` |
+| `ctrader_auth.py` | login cTrader ID ครั้งเดียวผ่าน browser แล้วเขียน token ลง `.env` (ดู `docs/ctrader.md`) |
 | `strategies.py` | กลยุทธ์กฎ 4 แบบ (ma_cross, trend_pullback, bollinger_breakout, rsi_reversion) เลือกด้วย `STRATEGY=` |
 | `ai_strategy.py` | สมอง AI: ตัดสินใจจากตลาด + ประสบการณ์ตัวเอง, สะท้อนบทเรียนหลังปิดไม้, เขียน playbook |
 | `brain.py` | เลือกสมอง: `rules` กฎเทรดเอง, `ai` Claude เทรดเอง, `hybrid` กฎเสนอ Claude ตัดสิน |
@@ -23,12 +24,13 @@ report.py  <------------------------------------------+
 | `fills.py` | จำลองการโดน SL/TP จาก high/low ของแท่ง ใช้ทั้ง dry mode และ replay |
 | `risk.py` | กฎที่สมองแตะไม่ได้: ห้ามเทรดเมื่อไร, SL/TP ตาม ATR อยู่ตรงไหน |
 | `replay.py` | ป้อนกราฟย้อนหลังทีละแท่งให้สมองเทรดบนกระดาษ ฝึกได้เร็ว |
-| `export_history.py` | ดึงแท่งจาก MT5 เป็น CSV (รันบน Windows ที่เปิด MT5) |
+| `export_history.py` | ดึงแท่งจากโบรกเป็น CSV (MT5: รันบน Windows ที่เปิด MT5, cTrader: ที่ไหนก็ได้) |
 | `report.py` | สรุปผล: win rate, กำไร, drawdown, ค่า API, playbook, บทเรียนล่าสุด |
 | `config.py` `indicators.py` | ตั้งค่าจาก .env และอินดิเคเตอร์ Python ล้วน |
 | `start.bat` `train.bat` `settings.bat` | ดับเบิลคลิกบน Windows: รันบอท / ฝึก AI / แก้ค่า (`setup.bat` เตรียมสภาพแวดล้อมให้) |
+| `start.sh` `train.sh` | อย่างเดียวกันสำหรับ Mac / Linux (ใช้กับ cTrader เพราะ MT5 รันได้แค่ Windows) |
 | `dashboard.bat` `dashboard.py` | หน้าต่างควบคุม: สถานะ MT5, ราคา, ปุ่ม Start/Stop/Pause, สถิติ, log (สั่งบอทผ่าน `pause.flag` / `stop.flag`) |
-| `wizard.py` | ถาม-ตอบรอบแรก อ่าน symbol, contract size, filling จาก MT5 แล้วเขียน `.env` ให้ |
+| `wizard.py` | ถาม-ตอบรอบแรก: เลือก MT5 หรือ cTrader, อ่าน symbol, contract size, filling จากโบรก แล้วเขียน `.env` ให้ |
 | `run_forever.bat` `install_autostart.bat` | สำหรับ VPS: watchdog รีสตาร์ทบอทเองตอน crash และตั้งให้รันตอน login |
 | `DECISIONS.md` | ทำไมถึงเลือกทางนี้ |
 
@@ -42,18 +44,28 @@ report.py  <------------------------------------------+
 
 ค่าเริ่มต้นคือ `MODE=dry`: paper trading ไม่ส่งอะไรให้โบรก ไม่มีเงินจริงขยับ จนกว่ามุงจะแก้ `MODE` ใน `.env` เอง
 
-ไม่จำกัดแค่ทอง: `SYMBOL=` เป็นอะไรก็ได้ที่โบรกมีใน Market Watch (EURUSD, GBPUSD, USDJPY, BTCUSD, US30 ...) wizard อ่าน contract size, ทศนิยม, lot ต่ำสุด, filling และ spread ของ symbol นั้นมาตั้งค่าให้ บอท 1 ตัวเทรด 1 symbol อยากเทรดหลายตัวก็ก๊อปโฟลเดอร์แยก (journal และ .env ของใครของมัน) คริปโตบน exchange ตรง (Binance ฯลฯ) ยังไม่รองรับ ต้องเป็น CFD ผ่าน MT5
+ไม่จำกัดแค่ทอง: `SYMBOL=` เป็นอะไรก็ได้ที่โบรกมีใน Market Watch (EURUSD, GBPUSD, USDJPY, BTCUSD, US30 ...) wizard อ่าน contract size, ทศนิยม, lot ต่ำสุด, filling และ spread ของ symbol นั้นมาตั้งค่าให้ บอท 1 ตัวเทรด 1 symbol อยากเทรดหลายตัวก็ก๊อปโฟลเดอร์แยก (journal และ .env ของใครของมัน) คริปโตบน exchange ตรง (Binance ฯลฯ) ยังไม่รองรับ ต้องเป็น CFD ผ่าน MT5 หรือ cTrader
+
+## ทางเลือก: cTrader บน Mac / Linux / VPS ถูกๆ
+
+MT5 ผูกกับ Windows แต่ cTrader Open API คุยผ่านอินเทอร์เน็ตตรงกับ Spotware ไม่ต้องเปิดโปรแกรมอะไรค้าง รันได้ทุก OS (XM ไม่มี cTrader; โบรกที่มี เช่น IC Markets, Pepperstone, FxPro) ขั้นตอนเต็มอยู่ใน [`docs/ctrader.md`](docs/ctrader.md) สรุปคือ
+
+1. เปิดบัญชี demo ที่โบรกที่มี cTrader แล้วสมัคร app ที่ https://openapi.ctrader.com (redirect URI `http://localhost:8765/callback`)
+2. Mac/Linux: `sh start.sh` / Windows: `start.bat` แล้วตอบ `2` (cTrader) ตอน wizard ถาม มันจะเปิด browser ให้ login cTrader ID แล้วเขียน token ลง `.env` เอง
+3. ที่เหลือเหมือนเดิมทุกอย่าง: dry -> demo -> live, train, dashboard, Telegram, journal ใบเดียวกัน
+
+ส่วนนี้ยังไม่เคยวิ่งกับ gateway จริง (เครื่องที่พัฒนาออกเน็ตไปหา ctraderapi.com ไม่ได้) test ทั้งหมดใช้ gateway จำลอง ไม้ demo แรกๆ ให้เทียบกำไร/ค่าคอมใน journal กับที่ cTrader โชว์ก่อนไว้ใจ
 
 - **`dashboard.bat`** หน้าต่างเดียวจบ: ไฟเขียว/แดงว่าต่อ MT5 ติดไหม, ราคาสด, ปุ่ม Start / Stop / Pause / Report / Train / Settings, สถิติ, playbook, log ของบอท MT5 ย่อทิ้งไว้ได้เลย
 - **`train.bat`** ฝึก AI ครบลูป: ดึงแท่งจาก MT5, เทียบกลยุทธ์ฟรี, replay บนกระดาษจนครบงบ, โชว์รายงาน
-- ทุก .bat สร้าง `.venv` และลง library ให้เอง ปิดหน้าต่างหรือ Ctrl+C เพื่อหยุด
+- ทุก .bat (และ .sh บน Mac/Linux) สร้าง `.venv` และลง library ให้เอง ปิดหน้าต่างหรือ Ctrl+C เพื่อหยุด
 
 แบบพิมพ์เองถ้าชอบ:
 
 ```
 pip install -r requirements.txt
 python wizard.py            # หรือ copy .env.example .env แล้วแก้เอง
-python -m unittest          # ไม่ต้องมี MT5 ก็รันได้บน Windows
+python -m unittest          # ไม่ต้องมี MT5 หรือ cTrader ก็รันได้
 python bot.py
 ```
 
@@ -101,7 +113,7 @@ python replay.py history.csv --compare
 ## ทำงานเป็นทีม
 
 - คนที่มีสิทธิ์ write ใน repo: clone มา สร้าง branch ของตัวเอง แก้ แล้วเปิด Pull Request เข้า `main` ทุก push รัน test อัตโนมัติ (แท็บ Actions) ทั้งบน Linux และ Windows
-- รัน test ในเครื่องที่ไม่ใช่ Windows: `PYTHONPATH=tests_support python -m unittest` (โฟลเดอร์ `tests_support` มีตัวแทน MetaTrader5 ให้ import ได้)
+- รัน test ในเครื่องที่ไม่ใช่ Windows: `PYTHONPATH=tests_support python -m unittest` (โฟลเดอร์ `tests_support` มีตัวแทน MetaTrader5 ให้ import ได้; test ของ cTrader ใช้ gateway จำลอง ไม่ต้องมีบัญชี)
 - `.env` (มี API key, Telegram token) และ `journal.db` เป็นของใครของมัน อยู่ใน `.gitignore` ห้าม commit เด็ดขาด
 - อยากให้ AI ของเพื่อนร่วมทีมเริ่มจากประสบการณ์เดียวกัน: ก๊อป `journal.db` ให้กันตรงๆ ได้ มันคือไฟล์เดียว
 - push แล้วโดน 403 หรือ "Permission denied to <ชื่อคนอื่น>": เครื่องจำ login GitHub บัญชีอื่นไว้ Windows ดับเบิลคลิก `fix_github_login.bat` / Mac เปิด Terminal แล้ว `sh fix_github_login.sh` มันล้าง login เก่าแล้วให้ login ใหม่ด้วยบัญชีที่ถูกเชิญ (404 = URL ผิด สังเกตขีดท้ายชื่อ `Bot-AI-Trader-` หรือยังไม่กดรับคำเชิญ)
