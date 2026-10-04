@@ -56,3 +56,13 @@ class CandleIndicatorTest(unittest.TestCase):
         self.assertEqual([bar["time"] for bar in bars], [0, 3600])  # two candles in the first hour, three in the next
         self.assertEqual(bars[0], {"time": 0, "open": 1, "high": 3, "low": 0.5, "close": 2, "spread": 30})
         self.assertEqual(bars[1], {"time": 3600, "open": 2, "high": 2.5, "low": 0.8, "close": 1.05, "spread": 30})
+
+    def test_adx_reads_low_in_chop_and_high_in_a_trend(self):
+        chop = self.candles([(2000 + (0.6 if i % 2 == 0 else -0.6),) * 4 for i in range(80)])
+        for i, candle in enumerate(chop):
+            candle["high"], candle["low"] = candle["close"] + 0.8, candle["close"] - 0.8
+        trend = self.candles([(2000 + i, 2001 + i, 1999.5 + i, 2000.8 + i) for i in range(80)])
+        self.assertLess(indicators.adx(chop)[-1], 10)
+        self.assertGreater(indicators.adx(trend)[-1], 90)
+        self.assertEqual(len(indicators.adx(trend)), 80 - 2 * 14 + 1)
+        self.assertEqual(indicators.adx(trend[:28]), [])

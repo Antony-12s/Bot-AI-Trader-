@@ -115,3 +115,66 @@ class SelectionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def quiet_market(length=300):
+    """Choppy, trendless candles whose ranges vary like a real quiet session."""
+    candles = []
+    for index in range(length):
+        amplitude = 0.4 + 0.1 * (((index // 2) * 7) % 11)  # pairs share an amplitude: up and down stay balanced
+        base = 2000 + (amplitude if index % 2 == 0 else -amplitude)
+        candles.append(candle(index, base, high=base + amplitude, low=base - amplitude))
+    return candles
+
+
+def excursion(turn=True):
+    """Four candles drifting 1.5 below the quiet market, then a candle that turns up (or keeps falling)."""
+    candles = quiet_market()
+    level = candles[-1]["close"]
+    for _ in range(4):
+        close = level - 1.5
+        candles.append(candle(len(candles), close, open_=level, high=level + 0.1, low=close - 0.1))
+        level = close
+    previous = candles[-1]
+    if turn:
+        close = previous["high"] + 0.5
+        candles.append(candle(len(candles), close, open_=previous["close"], high=close + 0.1, low=previous["close"] - 0.1))
+    else:
+        close = level - 1.5
+        candles.append(candle(len(candles), close, open_=level, high=level + 0.1, low=close - 0.1))
+    return candles
+
+
+def mirrored(candles):
+    """The same candles reflected around 2000: a fall becomes a rise."""
+    return [
+        dict(c, open=4000 - c["open"], high=4000 - c["low"], low=4000 - c["high"], close=4000 - c["close"])
+        for c in candles
+    ]
+
+
+class MrZscoreTest(unittest.TestCase):
+    CONFIG = {"TIMEFRAME": "M15"}
+
+    def test_buys_the_turn_after_a_stretch_below_the_mean_in_a_quiet_market(self):
+        signal, reason = strategies.mr_zscore(excursion(), self.CONFIG)
+        self.assertEqual(signal, "buy", reason)
+        self.assertIn("ATR below EMA20", reason)
+
+    def test_sells_the_mirror_image(self):
+        signal, reason = strategies.mr_zscore(mirrored(excursion()), self.CONFIG)
+        self.assertEqual(signal, "sell", reason)
+        self.assertIn("ATR above EMA20", reason)
+
+    def test_waits_for_the_turn_and_ignores_a_quiet_market_without_a_stretch(self):
+        self.assertEqual(strategies.mr_zscore(excursion(turn=False), self.CONFIG), (None, "no reversion setup"))
+        self.assertEqual(strategies.mr_zscore(quiet_market(), self.CONFIG), (None, "no reversion setup"))
+
+    def test_refuses_a_trending_market(self):
+        trend = [candle(index, 2000 + index, high=2001 + index, low=1999.5 + index, open_=2000 + index - 0.8) for index in range(300)]
+        signal, reason = strategies.mr_zscore(trend, self.CONFIG)
+        self.assertIsNone(signal)
+        self.assertIn("trending", reason)
+
+    def test_too_little_history_holds(self):
+        self.assertEqual(strategies.mr_zscore(quiet_market(40), self.CONFIG), (None, "not enough candles"))

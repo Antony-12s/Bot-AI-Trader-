@@ -9,8 +9,16 @@ None of these are proven. Run `python replay.py history.csv --compare` on your o
 before trusting any of them.
 """
 import indicators
+from config import TIMEFRAME_SECONDS
 
-CANDLES_NEEDED = 200  # EMA50 needs a few multiples of its period to settle
+CANDLES_NEEDED = 300  # EMA50 and the higher-timeframe ADX in mr_zscore need room to settle
+
+# mr_zscore settings (the M15-only cut of docs/mr-intraday-v1.md)
+MR_K = 2.0  # setup when price closes this many ATRs away from EMA20
+MR_RESET = 1.0  # a fresh excursion must have started within MR_RESET ATRs of EMA20 recently
+MR_ADX_MAX = 20  # higher-timeframe ADX must say "no trend"
+MR_ATR_PERCENTILE_MAX = 80  # higher-timeframe ATR must not be in its top fifth of the last 100 bars
+MR_LOOKBACK = 12  # candles to look back for the setup and the fresh-excursion check
 
 
 def closes(candles):
@@ -79,11 +87,48 @@ def rsi_reversion(candles, config):
     return None, "no reversion setup"
 
 
+def mr_zscore(candles, config):
+    """Mean reversion from docs/mr-intraday-v1.md, cut down to one timeframe.
+
+    Setup: a recent close at least MR_K ATRs below EMA20 (above, for a short) on a fresh
+    excursion, while the higher timeframe (2 candles per bar) shows no trend (ADX) and no
+    volatility blow-up (ATR percentile). Trigger: the last candle closes above the previous
+    candle's high (below its low for a short) while price is still stretched.
+
+    The spec's news filter, New York hours, M1 trigger and time stop are not here; pair it
+    with SL_ATR=1.0 and TP_ATR=2.0 so the target sits near the mean the setup measured.
+    """
+    prices = closes(candles)
+    ema20, atr = indicators.ema(prices, 20), indicators.atr(candles, 14)
+    seconds = TIMEFRAME_SECONDS.get(config.get("TIMEFRAME", "M15"), 900)
+    higher = indicators.resample(candles, 2, seconds)[:-1]  # completed higher-timeframe bars only
+    higher_adx, higher_atr = indicators.adx(higher, 14), indicators.atr(higher, 14)
+    if len(atr) < MR_LOOKBACK + 1 or len(ema20) < MR_LOOKBACK + 1 or not higher_adx or len(higher_atr) < 2:
+        return None, "not enough candles"
+    if higher_adx[-1] >= MR_ADX_MAX:
+        return None, f"trending (higher-timeframe ADX {higher_adx[-1]:.0f})"
+    recent_atr = higher_atr[-100:]
+    percentile = 100 * sum(1 for value in recent_atr[:-1] if value < recent_atr[-1]) / max(1, len(recent_atr) - 1)
+    if percentile >= MR_ATR_PERCENTILE_MAX:
+        return None, f"volatility expanding (ATR percentile {percentile:.0f})"
+    zs = [(price - mean) / spread for price, mean, spread in zip(prices[-MR_LOOKBACK:], ema20[-MR_LOOKBACK:], atr[-MR_LOOKBACK:]) if spread]
+    if len(zs) < MR_LOOKBACK:
+        return None, "flat market, ATR is zero"
+    earlier, setup_zone, now = zs[:-3], zs[-3:-1], zs[-1]
+    last, before = candles[-1], candles[-2]
+    if min(setup_zone) <= -MR_K and max(earlier) > -MR_RESET and now < -0.5 and last["close"] > before["high"]:
+        return "buy", f"stretched {min(setup_zone):.1f} ATR below EMA20 in a quiet market, turning up"
+    if max(setup_zone) >= MR_K and min(earlier) < MR_RESET and now > 0.5 and last["close"] < before["low"]:
+        return "sell", f"stretched {max(setup_zone):.1f} ATR above EMA20 in a quiet market, turning down"
+    return None, "no reversion setup"
+
+
 STRATEGIES = {
     "ma_cross": ma_cross,
     "trend_pullback": trend_pullback,
     "bollinger_breakout": bollinger_breakout,
     "rsi_reversion": rsi_reversion,
+    "mr_zscore": mr_zscore,
 }
 
 

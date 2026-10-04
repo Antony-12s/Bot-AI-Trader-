@@ -98,3 +98,14 @@
   - หา Telegram chat id เองจาก getUpdates หลังผู้ใช้ทักบอท ไม่ต้องไปอ่าน console
 - ทีม: tests_support/MetaTrader5.py เป็นตัวแทน package สำหรับรัน test นอก Windows และ GitHub Actions รัน test ทุก push ทั้ง Linux (ตัวแทน) และ Windows (package จริง)
   - เหตุผล: มี collaborator ใน repo แล้ว ต้องมีอะไรบอกว่า push นั้นพังไหมโดยไม่ต้องรอใครรันเอง
+
+## 2026-10-04 (สาย) รับงานทีม: MR-Intraday
+
+- เพื่อนร่วมทีม (branch strategy/mr-intraday-v1) ส่งสเปค mean reversion บน M1 + engine backtest แยก ไม่แตะบอท
+  - merge กับ branch หลักได้สะอาด ไม่มีไฟล์ชน test ทั้งสองชุดผ่านพร้อมกัน
+- mr_zscore ใน strategies.py คือเวอร์ชันย่อของสเปคนั้นบน timeframe เดียว ให้บอทและ replay --compare ใช้ได้ทันที
+  - เก็บ: z = (close - EMA20)/ATR14 ≥ 2, ADX14 ของ timeframe ใหญ่ 2 เท่า < 20, ATR percentile < 80, excursion ต้องเริ่มใหม่ (เคยอยู่ใน 1 ATR ของค่าเฉลี่ยไม่นานมานี้), trigger = แท่งล่าสุดปิดทะลุ high/low แท่งก่อน
+  - ตัด: ข่าว (ไม่มีปฏิทิน), ชั่วโมง NY (ไม่รู้ timezone server), trigger M1 (บอทมี timeframe เดียว), time stop, lot ตาม % equity
+  - exit ของสเปค (TP = EMA20, SL = 1 ATR) แทนด้วย SL_ATR=1.0 TP_ATR=2.0 ซึ่งใกล้เคียงเมื่อ z ≈ 2
+  - ADX เพิ่มใน indicators.py แบบ Wilder ตามสเปค
+  - สเปคเต็มยังอยู่ในสาย engine ของเพื่อน รอข้อมูล M1 กับปฏิทินข่าว

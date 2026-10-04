@@ -112,3 +112,37 @@ def resample(candles, factor, seconds):
                 "close": candle["close"], "spread": candle["spread"],
             })
     return bars
+
+
+def adx(candles, period=14):
+    """Average Directional Index (0-100) with Wilder smoothing; empty until 2 * period + 1 candles exist.
+
+    Below about 20 the market is drifting without a trend, above 25 it is trending.
+    """
+    plus_moves, minus_moves = [], []
+    for before, now in zip(candles, candles[1:]):
+        up, down = now["high"] - before["high"], before["low"] - now["low"]
+        plus_moves.append(up if up > down and up > 0 else 0.0)
+        minus_moves.append(down if down > up and down > 0 else 0.0)
+    ranges = true_ranges(candles)
+    if len(ranges) < 2 * period:
+        return []
+
+    def smooth(values):
+        total = sum(values[:period])
+        out = [total]
+        for value in values[period:]:
+            total = total - total / period + value
+            out.append(total)
+        return out
+
+    smoothed_range, smoothed_plus, smoothed_minus = smooth(ranges), smooth(plus_moves), smooth(minus_moves)
+    directional = []
+    for total_range, plus, minus in zip(smoothed_range, smoothed_plus, smoothed_minus):
+        plus_di = 100 * plus / total_range if total_range else 0.0
+        minus_di = 100 * minus / total_range if total_range else 0.0
+        directional.append(100 * abs(plus_di - minus_di) / (plus_di + minus_di) if plus_di + minus_di else 0.0)
+    values = [sum(directional[:period]) / period]
+    for value in directional[period:]:
+        values.append((values[-1] * (period - 1) + value) / period)
+    return values
