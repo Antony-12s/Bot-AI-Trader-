@@ -4,12 +4,6 @@ import wizard
 
 
 class WizardTest(unittest.TestCase):
-    def test_filling_prefers_ioc_then_fok_then_return(self):
-        self.assertEqual(wizard.filling_for(3), "IOC")
-        self.assertEqual(wizard.filling_for(2), "IOC")
-        self.assertEqual(wizard.filling_for(1), "FOK")
-        self.assertEqual(wizard.filling_for(0), "RETURN")
-
     def test_spread_limit_scales_with_the_symbol(self):
         self.assertEqual(wizard.spread_limit(12), 50)  # tight gold spread keeps the default
         self.assertEqual(wizard.spread_limit(30), 90)

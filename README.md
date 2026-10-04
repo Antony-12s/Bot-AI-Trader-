@@ -14,7 +14,8 @@ report.py  <------------------------------------------+
 
 | ไฟล์ | หน้าที่ |
 | --- | --- |
-| `bot.py` | ลูปหลัก: อ่านแท่งจาก MT5, ถามสมอง, ส่ง/จำลองออเดอร์, คุยกับ Telegram |
+| `bot.py` | ลูปหลัก: อ่านแท่งจากโบรก, ถามสมอง, ส่ง/จำลองออเดอร์, คุยกับ Telegram |
+| `brokers.py` `broker_mt5.py` | ชั้นโบรก: `BROKER=` ใน .env เลือกแพลตฟอร์ม ไฟล์เดียวที่แตะ MetaTrader5 คือ `broker_mt5.py` (cTrader กำลังทำบน branch `ctrader/open-api`) |
 | `strategies.py` | กลยุทธ์กฎ 4 แบบ (ma_cross, trend_pullback, bollinger_breakout, rsi_reversion) เลือกด้วย `STRATEGY=` |
 | `ai_strategy.py` | สมอง AI: ตัดสินใจจากตลาด + ประสบการณ์ตัวเอง, สะท้อนบทเรียนหลังปิดไม้, เขียน playbook |
 | `brain.py` | เลือกสมอง: `rules` กฎเทรดเอง, `ai` Claude เทรดเอง, `hybrid` กฎเสนอ Claude ตัดสิน |

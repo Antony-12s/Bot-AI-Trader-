@@ -117,3 +117,12 @@
   - เหตุผล: ไฟล์ธรรมดาทำให้ทั้ง watchdog, Telegram และหน้าต่างใช้กลไกเดียวกัน ไม่ต้องมี IPC
 - dashboard เชื่อม MT5 เองอีกสายเพื่อโชว์ราคา/บัญชี (MetaTrader5 package รองรับหลายโปรเซสต่อ terminal เดียว)
 - ยังไม่มี display ให้ทดสอบ GUI ในเครื่องที่พัฒนา จึง test เฉพาะส่วนที่ไม่ใช่หน้าต่าง (โปรเซสลูก, ข้อความสถานะ, สถิติ)
+
+## 2026-10-04 (เย็น) ชั้นโบรก
+
+- แยกทุกการเรียก MetaTrader5 ออกจาก bot.py/wizard.py/dashboard.py/export_history.py ไปไว้ใน broker_mt5.py และให้ brokers.load(config) เลือกตาม BROKER
+  - เหตุผล: จะทำ cTrader Open API เป็นสายงานแยก (branch ctrader/open-api) ต้องมีปลั๊กให้เสียบโดยไม่แตะลูปหลัก
+  - interface เล็กและเป็น duck typing (ดู docstring ใน brokers.py) ไม่ใช้ abstract class เพื่อให้ไฟล์โบรกใบเดียวจบ
+  - position_result() คืนผลไม้ที่ปิดเป็น dict กลางๆ (exit, closed_at, profit, outcome) แต่ละแพลตฟอร์มแปลงเอง
+  - journal.source ของไม้จริงใช้ชื่อโบรก ("mt5", ต่อไป "ctrader") ส่วน paper/replay เหมือนเดิม
+- test ของ bot ใช้ FakeBroker แทน mock MetaTrader5 ทีละฟังก์ชัน: อ่านง่ายขึ้นและใช้กับโบรกไหนก็ได้ ส่วน MT5 จริงมี test_broker_mt5.py ของตัวเอง

@@ -1,32 +1,30 @@
-"""MT5 auto-trading bot controlled from Telegram.
+"""Auto-trading bot controlled from Telegram (and dashboard.py).
 
-Run with the MT5 terminal open and logged in:  python bot.py
-Settings live in .env (copy .env.example). The rules live in strategies.py, the AI brain in
-ai_strategy.py, brain.py picks between them (BRAIN=rules | ai | hybrid), and every decision
-and trade goes into journal.db (journal.py).
+Run with the broker's terminal open and logged in:  python bot.py
+Settings live in .env (copy .env.example). BROKER picks the platform (brokers.py), the
+rules live in strategies.py, the AI brain in ai_strategy.py, brain.py picks between them
+(BRAIN=rules | ai | hybrid), and every decision and trade goes into journal.db (journal.py).
 
 Modes: dry trades on paper (virtual positions filled from the live candles, nothing is sent
 to the broker), demo and live send real orders. All three write the same journal, so the
 AI brain learns in dry mode and keeps that experience when it moves on.
 
 Unattended running: run_forever.bat restarts the bot after a crash, install_autostart.bat
-starts it at logon, /stop from Telegram ends it for good (until the next start).
+starts it at logon, /stop from Telegram (or stop.flag) ends it for good until the next start.
 """
 import json
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-
-import MetaTrader5 as mt5
 
 import ai_strategy
 import brain
+import brokers
 import fills
 import indicators
-from config import ENV_PATH, JOURNAL_PATH, candle_seconds
-from config import load_config as load_settings
+from config import JOURNAL_PATH, candle_seconds, load_config
 from journal import Journal, summarize
 from risk import account_error, block_reason, day_start, stop_distances, stop_levels
 
@@ -36,39 +34,17 @@ STOP_FLAG = Path(__file__).with_name("stop.flag")  # /stop leaves this so run_fo
 PAUSE_FLAG = Path(__file__).with_name("pause.flag")  # dashboard.py creates this to pause, removes it to resume
 
 
-def load_config(env_path=ENV_PATH):
-    config = load_settings(env_path)
-    for constant in ("TIMEFRAME_" + config["TIMEFRAME"], "ORDER_FILLING_" + config["FILLING"]):
-        if not hasattr(mt5, constant):
-            raise SystemExit(f"this MetaTrader5 package has no {constant}, check TIMEFRAME / FILLING in .env")
-    return config
-
-
-def build_order(side, tick, symbol_info, config, atr_value=None, spread_points=0):
-    """Market order request for mt5.order_send, always with stop loss and take profit.
+def plan_order(side, tick, symbol, config, atr_value=None, spread_points=0):
+    """Price, lot and stops for a market order.
 
     Stops are ATR multiples when configured, never closer than the broker's minimum stop
     distance or two spreads.
     """
-    is_buy = side == "buy"
-    price = tick.ask if is_buy else tick.bid
-    floor = max(int(getattr(symbol_info, "trade_stops_level", 0) or 0), 2 * spread_points)
-    stop_points, target_points = stop_distances(config, symbol_info.point, atr_value, floor)
-    stop_loss, take_profit = stop_levels(side, price, symbol_info.point, symbol_info.digits, stop_points, target_points)
-    return {
-        "action": mt5.TRADE_ACTION_DEAL,
-        "symbol": config["SYMBOL"],
-        "volume": config["LOT"],
-        "type": mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL,
-        "price": price,
-        "sl": stop_loss,
-        "tp": take_profit,
-        "deviation": 20,
-        "magic": config["MAGIC"],
-        "comment": "tradebot",
-        "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": getattr(mt5, "ORDER_FILLING_" + config["FILLING"]),
-    }
+    price = tick.ask if side == "buy" else tick.bid
+    floor = max(int(symbol.stops_level or 0), 2 * spread_points)
+    stop_points, target_points = stop_distances(config, symbol.point, atr_value, floor)
+    stop_loss, take_profit = stop_levels(side, price, symbol.point, symbol.digits, stop_points, target_points)
+    return {"side": side, "lot": config["LOT"], "price": price, "sl": stop_loss, "tp": take_profit}
 
 
 # --- telegram -------------------------------------------------------------
@@ -147,52 +123,40 @@ def read_commands(config, state, skip_only=False):
             notify(config, reply)
 
 
-# --- MT5 ------------------------------------------------------------------
+# --- broker ---------------------------------------------------------------------
 
 def ensure_connected(config, state):
-    """True when the terminal answers. Otherwise tell the owner once and keep trying to reconnect."""
-    if mt5.terminal_info() is not None:
+    """True when the broker answers. Otherwise tell the owner once and keep trying to reconnect."""
+    broker = state["broker"]
+    if broker.alive():
         if state.get("disconnected"):
             state["disconnected"] = False
-            notify(config, "MT5 connection is back")
+            notify(config, f"{broker.name} connection is back")
         return True
     if not state.get("disconnected"):
         state["disconnected"] = True
-        notify(config, "MT5 connection lost (terminal closed?), retrying every few seconds")
-    mt5.initialize()
+        notify(config, f"{broker.name} connection lost (terminal closed?), retrying every few seconds")
+    broker.connect()
     return False
 
 
-def open_positions(config):
-    positions = mt5.positions_get(symbol=config["SYMBOL"]) or ()
-    return [position for position in positions if position.magic == config["MAGIC"]]
-
-
-def pnl_today(server_now):
+def pnl_today(broker, server_now):
     """Realized result of every trade on the account since server midnight.
 
     Manual trades count too, on purpose: the limit protects the account.
     Floating loss is not counted, it is capped by the single position's SL.
     """
-    start = day_start(server_now)
-    # Query a wide window and filter on deal.time ourselves: deal and tick times
-    # share the broker's server clock, the PC clock does not.
-    now = datetime.now()
-    deals = mt5.history_deals_get(now - timedelta(days=3), now + timedelta(days=3)) or ()
-    return sum(
-        deal.profit + deal.commission + deal.swap
-        for deal in deals
-        if deal.time >= start and deal.type in (mt5.DEAL_TYPE_BUY, mt5.DEAL_TYPE_SELL)
-    )
+    return broker.realized_since(day_start(server_now))
 
 
 def status_text(config, state):
-    tick = mt5.symbol_info_tick(config["SYMBOL"])
-    pnl = f"{pnl_today(tick.time):.2f}" if tick else "unknown"
+    broker = state["broker"]
+    tick = broker.tick(config["SYMBOL"])
+    pnl = f"{pnl_today(broker, tick.time):.2f}" if tick else "unknown"
     text = (
         f"mode={config['MODE']} brain={config['BRAIN']} paused={state['paused']} "
-        f"symbol={config['SYMBOL']} open_positions={len(open_positions(config))} pnl_today={pnl} "
-        f"last_decision={state.get('last_decision', 'none yet')}"
+        f"symbol={config['SYMBOL']} open_positions={len(broker.open_positions(config['SYMBOL'], config['MAGIC']))}"
+        f" pnl_today={pnl} last_decision={state.get('last_decision', 'none yet')}"
     )
     journal = state.get("journal")
     if journal:
@@ -205,39 +169,35 @@ def status_text(config, state):
     return text
 
 
-def place_order(side, tick, symbol_info, config, reason="", atr_value=None, spread_points=0):
+def place_order(side, tick, symbol, config, state, reason="", atr_value=None, spread_points=0):
     """Send (or, in dry mode, only announce) a market order.
 
-    Returns the request dict when the position exists, with position_id set for real
-    orders, or None when the order was rejected.
+    Returns the order plan when the position exists, with position_id set for real orders,
+    or None when the broker rejected it.
     """
-    request = build_order(side, tick, symbol_info, config, atr_value, spread_points)
-    summary = (
-        f"{side} {request['volume']} {request['symbol']} @ {request['price']} "
-        f"sl {request['sl']} tp {request['tp']}"
-    )
+    broker = state["broker"]
+    plan = plan_order(side, tick, symbol, config, atr_value, spread_points)
+    summary = f"{side} {plan['lot']} {config['SYMBOL']} @ {plan['price']} sl {plan['sl']} tp {plan['tp']}"
     if reason:
         summary += f" [{reason}]"
     if config["MODE"] == "dry":
         notify(config, "[paper] " + summary)
-        return request
+        return plan
     # Re-checked on every order: the terminal can be switched to another account mid-run.
-    account = mt5.account_info()
-    is_demo = account is not None and account.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO
-    error = account_error(config["MODE"], is_demo)
+    account = broker.account()
+    error = account_error(config["MODE"], account is not None and account.is_demo)
     if error:
         notify(config, error)
         raise SystemExit(error)
-    result = mt5.order_send(request)
-    if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-        detail = f"retcode={result.retcode} {result.comment}" if result else mt5.last_error()
-        notify(config, f"order FAILED: {summary} ({detail})")  # no retry, next signal decides
+    result = broker.market_order(
+        side, config["SYMBOL"], plan["lot"], plan["price"], plan["sl"], plan["tp"], config["MAGIC"], config["FILLING"]
+    )
+    if not result.ok:
+        notify(config, f"order FAILED: {summary} ({result.detail})")  # no retry, next signal decides
         return None
-    # The position keeps the ticket of the deal's position_id; fall back to the order ticket.
-    deals = mt5.history_deals_get(ticket=result.deal) or ()
-    request["position_id"] = deals[0].position_id if deals else result.order
+    plan["position_id"] = result.position_id
     notify(config, "opened " + summary)
-    return request
+    return plan
 
 
 def remember(state, decision):
@@ -248,13 +208,12 @@ def remember(state, decision):
 
 # --- learning from closed trades --------------------------------------------
 
-def price_path(config, trade):
+def price_path(config, state, trade):
     """Closes from around the entry to now, for the brain's review of a closed trade."""
     held = round((trade["closed_at"] - trade["opened_at"]) / candle_seconds(config)) + 1
     count = max(2, min(held, ai_strategy.PATH_SHOWN))
-    timeframe = getattr(mt5, "TIMEFRAME_" + config["TIMEFRAME"])
-    rates = mt5.copy_rates_from_pos(config["SYMBOL"], timeframe, 0, count)
-    return [float(candle["close"]) for candle in rates] if rates is not None else []
+    candles = state["broker"].candles(config["SYMBOL"], config["TIMEFRAME"], count)
+    return [candle["close"] for candle in candles] if candles else []
 
 
 def finish_trade(config, state, trade_id, price, closed_at, profit, outcome):
@@ -265,7 +224,7 @@ def finish_trade(config, state, trade_id, price, closed_at, profit, outcome):
     if brain.learns(config):
         spent = journal.spend(source="bot", since=day_start(closed_at))
         lesson, playbook = ai_strategy.review(
-            journal, trade, price_path(config, trade), config, "bot", state["run"], spent
+            journal, trade, price_path(config, state, trade), config, "bot", state["run"], spent
         )
         if lesson:
             text += "\nlesson: " + lesson
@@ -274,57 +233,38 @@ def finish_trade(config, state, trade_id, price, closed_at, profit, outcome):
     notify(config, text)
 
 
-def settle_paper(config, state, candle, symbol_info):
+def settle_paper(config, state, candle, symbol):
     """Close dry-mode paper positions that this closed candle's range took out."""
     journal = state["journal"]
     for trade in journal.open_trades("paper"):
-        hit = fills.exit_price(trade, float(candle["high"]), float(candle["low"]), int(candle["spread"]), symbol_info.point)
+        hit = fills.exit_price(trade, float(candle["high"]), float(candle["low"]), int(candle["spread"]), symbol.point)
         if hit:
             price, outcome = hit
             closed_at = int(candle["time"]) + candle_seconds(config)
             finish_trade(config, state, trade["id"], price, closed_at, fills.profit(trade, price, config["CONTRACT_SIZE"]), outcome)
 
 
-def settle_mt5(config, state):
-    """Close journal entries of MT5 positions that are gone, from the broker's own deals."""
-    journal = state.get("journal")
+def settle_broker(config, state):
+    """Close journal entries of broker positions that are gone, from the broker's own records."""
+    journal, broker = state.get("journal"), state["broker"]
     if not journal:
         return
-    for trade in journal.open_trades("mt5"):
-        if mt5.positions_get(ticket=trade["position_id"]):
-            continue
-        deals = mt5.history_deals_get(position=trade["position_id"]) or ()
-        exits = [deal for deal in deals if deal.entry in (mt5.DEAL_ENTRY_OUT, mt5.DEAL_ENTRY_OUT_BY)]
-        if not exits:
-            continue  # the terminal has not shown the closing deal yet, look again next poll
-        last = max(exits, key=lambda deal: deal.time)
-        outcome = {mt5.DEAL_REASON_SL: "sl", mt5.DEAL_REASON_TP: "tp"}.get(last.reason, "closed")
-        profit = sum(deal.profit + deal.commission + deal.swap for deal in deals)
-        finish_trade(config, state, trade["id"], last.price, last.time, profit, outcome)
+    for trade in journal.open_trades(broker.name):
+        result = broker.position_result(trade["position_id"])
+        if result:
+            finish_trade(config, state, trade["id"], result["exit"], result["closed_at"], result["profit"], result["outcome"])
 
 
 # --- the loop -----------------------------------------------------------------
 
-def to_candles(rates):
-    """MT5 rate rows as plain dicts, the shape every brain and indicator works on."""
-    return [
-        {
-            "time": int(row["time"]), "open": float(row["open"]), "high": float(row["high"]),
-            "low": float(row["low"]), "close": float(row["close"]), "spread": int(row["spread"]),
-        }
-        for row in rates
-    ]
-
-
 def check_market(config, state):
     """Ask the brain once per newly closed candle."""
-    journal = state.get("journal")
+    broker, journal = state["broker"], state.get("journal")
     paper = journal is not None and config["MODE"] == "dry"
-    timeframe = getattr(mt5, "TIMEFRAME_" + config["TIMEFRAME"])
-    rates = mt5.copy_rates_from_pos(config["SYMBOL"], timeframe, 0, brain.candles_needed(config) + 1)
-    if rates is None or len(rates) < 2:
+    candles = broker.candles(config["SYMBOL"], config["TIMEFRAME"], brain.candles_needed(config) + 1)
+    if not candles or len(candles) < 2:
         return
-    closed_candles = to_candles(rates[:-1])  # the last row is still forming
+    closed_candles = candles[:-1]  # the last one is still forming
     candle = closed_candles[-1]
     candle_time = candle["time"]
     if candle_time == state["last_candle_time"]:
@@ -333,19 +273,19 @@ def check_market(config, state):
     state["last_candle_time"] = candle_time
     if first_look:
         return  # never trade a candle that closed before the bot started
-    tick = mt5.symbol_info_tick(config["SYMBOL"])
-    symbol_info = mt5.symbol_info(config["SYMBOL"])
-    if tick is None or symbol_info is None:
-        return remember(state, "skipped: no price from MT5")
+    tick = broker.tick(config["SYMBOL"])
+    symbol = broker.symbol(config["SYMBOL"])
+    if tick is None or symbol is None:
+        return remember(state, "skipped: no price from the broker")
     if paper:
-        settle_paper(config, state, candle, symbol_info)
+        settle_paper(config, state, candle, symbol)
     age = tick.time - candle_time
     if age > STALE_CANDLES * candle_seconds(config):
         return remember(state, f"skipped: candle closed {age // 60} min ago, the market was shut")
-    spread_points = round((tick.ask - tick.bid) / symbol_info.point)
+    spread_points = round((tick.ask - tick.bid) / symbol.point)
     start = day_start(tick.time)
-    open_count = len(open_positions(config)) + (len(journal.open_trades("paper")) if paper else 0)
-    pnl = pnl_today(tick.time) + (journal.profit_since(start, "paper") if paper else 0.0)
+    open_count = len(broker.open_positions(config["SYMBOL"], config["MAGIC"])) + (len(journal.open_trades("paper")) if paper else 0)
+    pnl = pnl_today(broker, tick.time) + (journal.profit_since(start, "paper") if paper else 0.0)
     spent = journal.spend(source="bot", since=start) if journal else 0.0
     blocked = block_reason(state["paused"], open_count, pnl, spread_points, config, spent)
     if blocked:
@@ -359,17 +299,17 @@ def check_market(config, state):
         return
     atr_values = indicators.atr(closed_candles, config["ATR_PERIOD"])
     # the AI call can take a while, so price the order from a fresh tick
-    fresh_tick = mt5.symbol_info_tick(config["SYMBOL"]) or tick
+    fresh_tick = broker.tick(config["SYMBOL"]) or tick
     opened = place_order(
-        signal, fresh_tick, symbol_info, config, reason, atr_values[-1] if atr_values else None, spread_points
+        signal, fresh_tick, symbol, config, state, reason, atr_values[-1] if atr_values else None, spread_points
     )
     if opened and journal:
         position = {
-            "side": signal, "lot": opened["volume"], "entry": opened["price"], "sl": opened["sl"],
+            "side": signal, "lot": opened["lot"], "entry": opened["price"], "sl": opened["sl"],
             "tp": opened["tp"], "opened_at": fresh_tick.time, "reason": reason,
         }
         journal.open_trade(
-            "paper" if paper else "mt5", state["run"], config["SYMBOL"], position,
+            "paper" if paper else broker.name, state["run"], config["SYMBOL"], position,
             position_id=opened.get("position_id"), snapshot=ai_strategy.snapshot(closed_candles, config),
             brain=config["BRAIN"],
         )
@@ -377,15 +317,15 @@ def check_market(config, state):
 
 def main():
     config = load_config()
-    if not mt5.initialize():
-        raise SystemExit(f"cannot connect to MT5 (is the terminal open and logged in?): {mt5.last_error()}")
+    broker = brokers.load(config)
+    if not broker.connect():
+        raise SystemExit(broker.connection_hint())
     journal = Journal(JOURNAL_PATH)
     try:
-        if not mt5.symbol_select(config["SYMBOL"], True):
+        if not broker.select_symbol(config["SYMBOL"]):
             raise SystemExit(f"symbol {config['SYMBOL']} not found, broker naming differs: check SYMBOL in .env")
-        account = mt5.account_info()
-        is_demo = account is not None and account.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO
-        error = account_error(config["MODE"], is_demo)
+        account = broker.account()
+        error = account_error(config["MODE"], account is not None and account.is_demo)
         if error:
             raise SystemExit(error)
         state = {
@@ -393,6 +333,7 @@ def main():
             "telegram_paused": False,
             "last_candle_time": None,
             "update_offset": 0,
+            "broker": broker,
             "journal": journal,
             "run": f"{config['MODE']}-{datetime.now():%Y%m%d-%H%M%S}",
         }
@@ -406,7 +347,7 @@ def main():
                 break
             if ensure_connected(config, state):
                 if config["MODE"] != "dry":
-                    settle_mt5(config, state)
+                    settle_broker(config, state)
                 check_market(config, state)
             time.sleep(POLL_SECONDS)
         STOP_FLAG.touch()
@@ -418,7 +359,7 @@ def main():
         raise
     finally:
         journal.close()
-        mt5.shutdown()
+        broker.shutdown()
 
 
 if __name__ == "__main__":

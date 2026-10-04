@@ -1,4 +1,4 @@
-"""Export MT5 candles to a CSV file for replay.py. Needs the MT5 terminal open (Windows).
+"""Export the broker's candles to a CSV file for replay.py. Needs the broker connected (MT5: terminal open, Windows).
 
     python export_history.py --days 90 --out history.csv
 
@@ -9,13 +9,12 @@ import argparse
 import csv
 from datetime import datetime, timezone
 
-import MetaTrader5 as mt5
-
+import brokers
 from config import candle_seconds, load_config
 
 
 def write_csv(rates, path, digits):
-    """Write MT5 rates (anything indexable by field name) as replay.py expects them."""
+    """Write candles (anything indexable by field name) as replay.py expects them."""
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["time", "open", "high", "low", "close", "spread"])
@@ -32,23 +31,24 @@ def main():
     parser.add_argument("--out", default="history.csv")
     args = parser.parse_args()
     config = load_config()
-    if not mt5.initialize():
-        raise SystemExit(f"cannot connect to MT5 (is the terminal open and logged in?): {mt5.last_error()}")
+    broker = brokers.load(config)
+    if not broker.connect():
+        raise SystemExit(broker.connection_hint())
     try:
-        if not mt5.symbol_select(config["SYMBOL"], True):
+        if not broker.select_symbol(config["SYMBOL"]):
             raise SystemExit(f"symbol {config['SYMBOL']} not found, check SYMBOL in .env")
-        info = mt5.symbol_info(config["SYMBOL"])
+        info = broker.symbol(config["SYMBOL"])
         count = args.days * 86400 // candle_seconds(config)
-        rates = mt5.copy_rates_from_pos(config["SYMBOL"], getattr(mt5, "TIMEFRAME_" + config["TIMEFRAME"]), 0, count)
-        if rates is None or len(rates) < 2:
-            raise SystemExit(f"no candles returned: {mt5.last_error()} (the terminal may hold less history, scroll the chart back)")
-        written = write_csv(rates[:-1], args.out, info.digits)  # the last candle is still forming
+        candles = broker.candles(config["SYMBOL"], config["TIMEFRAME"], count)
+        if not candles or len(candles) < 2:
+            raise SystemExit("no candles returned (the terminal may hold less history, scroll the chart back)")
+        written = write_csv(candles[:-1], args.out, info.digits)  # the last candle is still forming
         print(f"wrote {written} {config['TIMEFRAME']} candles of {config['SYMBOL']} to {args.out}")
-        print(f"{config['SYMBOL']}: contract size {info.trade_contract_size}, point {info.point}, digits {info.digits}")
-        if float(config["CONTRACT_SIZE"]) != float(info.trade_contract_size):
-            print(f"note: CONTRACT_SIZE in .env is {config['CONTRACT_SIZE']}, the broker says {info.trade_contract_size}")
+        print(f"{config['SYMBOL']}: contract size {info.contract_size}, point {info.point}, digits {info.digits}")
+        if float(config["CONTRACT_SIZE"]) != float(info.contract_size):
+            print(f"note: CONTRACT_SIZE in .env is {config['CONTRACT_SIZE']}, the broker says {info.contract_size}")
     finally:
-        mt5.shutdown()
+        broker.shutdown()
 
 
 if __name__ == "__main__":

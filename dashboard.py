@@ -1,9 +1,9 @@
-"""One window for the whole thing: MT5 status, live price, Start / Stop / Pause, stats, playbook, log.
+"""One window for the whole thing: broker status, live price, Start / Stop / Pause, stats, playbook, log.
 
     dashboard.bat   (or: python dashboard.py)
 
-The dashboard starts bot.py as a child process and shows its output, so MT5 itself can stay
-minimised. Pause and Stop work through pause.flag / stop.flag, which the bot checks every
+The dashboard starts bot.py as a child process and shows its output, so the broker's terminal
+can stay minimised. Pause and Stop work through pause.flag / stop.flag, which the bot checks every
 few seconds. It needs the Tk that ships with python.org's Windows installer; nothing extra.
 """
 import queue
@@ -13,6 +13,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+import brokers
 from config import JOURNAL_PATH, load_config
 from journal import Journal, summarize
 
@@ -63,11 +64,11 @@ class BotProcess:
                 return out
 
 
-def account_line(account, mt5):
+def account_line(account, broker_name="broker"):
     if account is None:
-        return "MT5: connected, no account logged in"
-    kind = "demo" if account.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO else "REAL MONEY"
-    return f"MT5: {account.login} @ {account.server} ({kind})  balance {account.balance:.2f} {account.currency}"
+        return f"{broker_name}: connected, no account logged in"
+    kind = "demo" if account.is_demo else "REAL MONEY"
+    return f"{broker_name}: {account.login} @ {account.server} ({kind})  balance {account.balance:.2f} {account.currency}"
 
 
 def price_line(symbol, tick, digits):
@@ -81,7 +82,7 @@ def stats_lines(journal):
     trades = journal.closed_trades()
     totals = summarize(trades)
     open_paper = len(journal.open_trades("paper"))
-    open_mt5 = len(journal.open_trades("mt5"))
+    open_mt5 = len(journal.open_trades()) - open_paper
     lines = [
         f"trades {totals['trades']}   wins {totals['wins']}   losses {totals['losses']}   win rate {totals['win_rate']:.0%}",
         f"net {totals['net']:+.2f}   profit factor {'n/a' if totals['profit_factor'] is None else totals['profit_factor']}"
@@ -100,15 +101,14 @@ def main():
     import tkinter as tk
     from tkinter import messagebox, scrolledtext
 
-    try:
-        import MetaTrader5 as mt5
-    except ImportError:  # the window still works for log and stats
-        mt5 = None
-
     config = load_config()
+    try:
+        broker = brokers.load(config)
+    except ImportError:  # e.g. the MetaTrader5 package off Windows: the window still shows log and stats
+        broker = None
     bot = BotProcess()
     journal = Journal(JOURNAL_PATH)
-    mt5_ready = bool(mt5 and mt5.initialize())
+    broker_ready = bool(broker and broker.connect())
 
     root = tk.Tk()
     root.title(f"Bot AI Trader  [{config['MODE']} / {config['BRAIN']} / {config['STRATEGY']}]")
@@ -177,25 +177,24 @@ def main():
         log.configure(state="disabled")
 
     def refresh():
-        nonlocal mt5_ready
+        nonlocal broker_ready
         append_log(bot.drain())
-        if mt5 is None:
+        if broker is None:
             light.itemconfigure(dot, fill="grey")
-            connection.configure(text="MT5: the MetaTrader5 package is not installed on this machine (Windows only)")
+            connection.configure(text=f"{config['BROKER']}: this platform's package is not installed on this machine (MT5 is Windows only)")
         else:
-            if not mt5_ready:
-                mt5_ready = mt5.initialize()
-            terminal = mt5.terminal_info() if mt5_ready else None
-            if terminal is None:
-                mt5_ready = False
+            if not broker_ready:
+                broker_ready = broker.connect()
+            if not (broker_ready and broker.alive()):
+                broker_ready = False
                 light.itemconfigure(dot, fill="#c62828")
-                connection.configure(text="MT5: not connected. Open the MT5 terminal and log in; this keeps retrying.")
+                connection.configure(text=f"{broker.name}: not connected. {broker.connection_hint()} This keeps retrying.")
                 price.configure(text="")
             else:
                 light.itemconfigure(dot, fill="#2e7d32")
-                connection.configure(text=account_line(mt5.account_info(), mt5))
-                info = mt5.symbol_info(config["SYMBOL"])
-                price.configure(text=price_line(config["SYMBOL"], mt5.symbol_info_tick(config["SYMBOL"]), info.digits if info else 2))
+                connection.configure(text=account_line(broker.account(), broker.name))
+                info = broker.symbol(config["SYMBOL"])
+                price.configure(text=price_line(config["SYMBOL"], broker.tick(config["SYMBOL"]), info.digits if info else 2))
         paused = PAUSE_FLAG.exists()
         pause_button.configure(text="Resume" if paused else "Pause", bg="#f9a825" if paused else root.cget("bg"))
         running = bot.running
@@ -214,8 +213,8 @@ def main():
             return
         bot.stop()
         journal.close()
-        if mt5 is not None:
-            mt5.shutdown()
+        if broker is not None:
+            broker.shutdown()
         root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)

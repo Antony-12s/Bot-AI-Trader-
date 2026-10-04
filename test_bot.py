@@ -1,4 +1,4 @@
-"""Run: python -m unittest   (no MT5 terminal needed, every MT5 call is faked)"""
+"""Run: python -m unittest   (no broker needed: every broker call goes through FakeBroker)"""
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +11,7 @@ from journal import Journal
 from risk import SECONDS_PER_DAY
 
 CONFIG = {
+    "BROKER": "mt5",
     "MODE": "demo",
     "BRAIN": "rules",
     "STRATEGY": "ma_cross",
@@ -34,13 +35,69 @@ CONFIG = {
 }
 CANDLE = 900  # M15
 TICK = SimpleNamespace(ask=2650.50, bid=2650.20, time=10 * SECONDS_PER_DAY + 3600)
-GOLD = SimpleNamespace(point=0.01, digits=2)
-DEMO_ACCOUNT = SimpleNamespace(trade_mode=bot.mt5.ACCOUNT_TRADE_MODE_DEMO)
-REAL_ACCOUNT = SimpleNamespace(trade_mode=bot.mt5.ACCOUNT_TRADE_MODE_REAL)
+GOLD = SimpleNamespace(name="XAUUSD", point=0.01, digits=2, stops_level=0, contract_size=100.0, min_lot=0.01, spread_points=30, filling="IOC")
+DEMO_ACCOUNT = SimpleNamespace(login=1, server="demo", is_demo=True, balance=1000.0, currency="USD")
+REAL_ACCOUNT = SimpleNamespace(login=2, server="real", is_demo=False, balance=1000.0, currency="USD")
+
+
+class FakeBroker:
+    """Answers every broker call from attributes the test sets; records the orders it was given."""
+    name = "mt5"
+
+    def __init__(self, candles=None, tick=TICK, symbol=GOLD, account=DEMO_ACCOUNT, positions=(), realized=0.0,
+                 results=None, order=None, alive=True):
+        self.candle_data, self.tick_data, self.symbol_data, self.account_data = candles, tick, symbol, account
+        self.positions_data, self.realized, self.results = list(positions), realized, results or {}
+        self.order_result = order or SimpleNamespace(ok=True, position_id=777, detail="")
+        self.alive_flag, self.orders, self.connects = alive, [], 0
+
+    def connect(self):
+        self.connects += 1
+        return self.alive_flag
+
+    def connection_hint(self):
+        return "fake broker is down"
+
+    def alive(self):
+        return self.alive_flag
+
+    def shutdown(self):
+        pass
+
+    def account(self):
+        return self.account_data
+
+    def symbols(self):
+        return [GOLD.name]
+
+    def select_symbol(self, name):
+        return True
+
+    def symbol(self, name):
+        return self.symbol_data
+
+    def tick(self, name):
+        return self.tick_data
+
+    def candles(self, name, timeframe, count):
+        return self.candle_data
+
+    def open_positions(self, name, magic):
+        return self.positions_data
+
+    def position_result(self, position_id):
+        return self.results.get(position_id)
+
+    def realized_since(self, server_time):
+        return self.realized
+
+    def market_order(self, side, name, lot, price, sl, tp, magic, filling):
+        self.orders.append({"side": side, "name": name, "lot": lot, "price": price, "sl": sl, "tp": tp, "magic": magic, "filling": filling})
+        return self.order_result
 
 
 def candles(closes, shift=0):
-    """Fake rates whose last row is the candle forming at TICK.time; shift moves them on by whole candles."""
+    """Fake candles whose last one is forming at TICK.time; shift moves them on by whole candles."""
     count = len(closes)
     return [
         {
@@ -52,7 +109,7 @@ def candles(closes, shift=0):
 
 
 # Prices sit near TICK so paper stops at 2645.50 / 2660.50 are not hit by accident.
-CROSS_UP = [2650.0] * 30 + [2655.0, 2655.0]  # last row = forming candle
+CROSS_UP = [2650.0] * 30 + [2655.0, 2655.0]  # last one = forming candle
 FLAT = [2650.0] * 32
 
 
@@ -75,91 +132,75 @@ class RiskTest(unittest.TestCase):
         self.assertIsNone(bot.account_error("demo", is_demo_account=True))
         self.assertIsNone(bot.account_error("live", is_demo_account=False))
 
-    def test_pnl_today_skips_deposits_and_yesterday(self):
-        today = TICK.time - 60
-        yesterday = TICK.time - SECONDS_PER_DAY
-        buy, balance = bot.mt5.DEAL_TYPE_BUY, bot.mt5.DEAL_TYPE_BALANCE
-        deals = [
-            SimpleNamespace(time=today, type=buy, profit=-12.0, commission=-0.5, swap=0.0),
-            SimpleNamespace(time=today, type=balance, profit=1000.0, commission=0.0, swap=0.0),
-            SimpleNamespace(time=yesterday, type=buy, profit=-99.0, commission=0.0, swap=0.0),
-        ]
-        with mock.patch.object(bot.mt5, "history_deals_get", return_value=deals):
-            self.assertEqual(bot.pnl_today(TICK.time), -12.5)
+    def test_pnl_today_asks_the_broker_from_server_midnight(self):
+        broker = FakeBroker(realized=-12.5)
+        with mock.patch.object(broker, "realized_since", wraps=broker.realized_since) as realized:
+            self.assertEqual(bot.pnl_today(broker, TICK.time), -12.5)
+        realized.assert_called_once_with(10 * SECONDS_PER_DAY)
 
 
 class OrderTest(unittest.TestCase):
     def test_buy_uses_ask_with_sl_below_and_tp_above(self):
-        order = bot.build_order("buy", TICK, GOLD, CONFIG)
-        self.assertEqual((order["price"], order["sl"], order["tp"]), (2650.50, 2645.50, 2660.50))
-        self.assertEqual(order["type"], bot.mt5.ORDER_TYPE_BUY)
+        plan = bot.plan_order("buy", TICK, GOLD, CONFIG)
+        self.assertEqual((plan["price"], plan["sl"], plan["tp"], plan["lot"]), (2650.50, 2645.50, 2660.50, 0.01))
 
     def test_sell_uses_bid_with_sl_above_and_tp_below(self):
-        order = bot.build_order("sell", TICK, GOLD, CONFIG)
-        self.assertEqual((order["price"], order["sl"], order["tp"]), (2650.20, 2655.20, 2640.20))
-        self.assertEqual(order["type"], bot.mt5.ORDER_TYPE_SELL)
+        plan = bot.plan_order("sell", TICK, GOLD, CONFIG)
+        self.assertEqual((plan["price"], plan["sl"], plan["tp"]), (2650.20, 2655.20, 2640.20))
 
     def test_atr_stops_respect_the_brokers_minimum_distance(self):
         atr_config = dict(CONFIG, SL_ATR=1.5, TP_ATR=3.0)
-        order = bot.build_order("buy", TICK, GOLD, atr_config, atr_value=2.0, spread_points=30)
-        self.assertEqual((order["sl"], order["tp"]), (2647.50, 2656.50))  # 300 / 600 points
-        strict = SimpleNamespace(point=0.01, digits=2, trade_stops_level=400)
-        order = bot.build_order("buy", TICK, strict, atr_config, atr_value=2.0, spread_points=30)
-        self.assertEqual((order["sl"], order["tp"]), (2646.50, 2656.50))  # stop pushed out to 400 points
+        plan = bot.plan_order("buy", TICK, GOLD, atr_config, atr_value=2.0, spread_points=30)
+        self.assertEqual((plan["sl"], plan["tp"]), (2647.50, 2656.50))  # 300 / 600 points
+        strict = SimpleNamespace(point=0.01, digits=2, stops_level=400)
+        plan = bot.plan_order("buy", TICK, strict, atr_config, atr_value=2.0, spread_points=30)
+        self.assertEqual((plan["sl"], plan["tp"]), (2646.50, 2656.50))  # stop pushed out to 400 points
 
-    def place(self, mode, account, retcode=bot.mt5.TRADE_RETCODE_DONE, deals=()):
-        result = SimpleNamespace(retcode=retcode, comment="fake", order=501, deal=901)
-        with mock.patch.object(bot.mt5, "account_info", return_value=account), \
-                mock.patch.object(bot.mt5, "order_send", return_value=result) as order_send, \
-                mock.patch.object(bot.mt5, "history_deals_get", return_value=deals), \
-                mock.patch.object(bot, "notify") as notify:
+    def place(self, mode, account, order=None):
+        broker = FakeBroker(account=account, order=order)
+        with mock.patch.object(bot, "notify") as notify:
             try:
-                opened = bot.place_order("buy", TICK, GOLD, dict(CONFIG, MODE=mode))
+                opened = bot.place_order("buy", TICK, GOLD, dict(CONFIG, MODE=mode), {"broker": broker})
             except SystemExit:
-                return order_send, notify, True, None
-        return order_send, notify, False, opened
+                return broker, notify, True, None
+        return broker, notify, False, opened
 
     def test_dry_mode_never_sends_an_order_but_reports_a_paper_position(self):
-        order_send, notify, _, opened = self.place("dry", REAL_ACCOUNT)
-        order_send.assert_not_called()
+        broker, notify, _, opened = self.place("dry", REAL_ACCOUNT)
+        self.assertEqual(broker.orders, [])
         self.assertIn("[paper] buy", notify.call_args.args[1])
         self.assertEqual(opened["price"], 2650.50)
         self.assertNotIn("position_id", opened)
 
     def test_demo_mode_on_real_account_stops_without_ordering(self):
-        order_send, _, exited, _ = self.place("demo", REAL_ACCOUNT)
-        order_send.assert_not_called()
-        self.assertTrue(exited)
+        broker, _, exited, _ = self.place("demo", REAL_ACCOUNT)
+        self.assertEqual((broker.orders, exited), ([], True))
 
     def test_demo_mode_on_unknown_account_stops_without_ordering(self):
-        order_send, _, exited, _ = self.place("demo", None)
-        order_send.assert_not_called()
-        self.assertTrue(exited)
+        broker, _, exited, _ = self.place("demo", None)
+        self.assertEqual((broker.orders, exited), ([], True))
 
     def test_demo_mode_on_demo_account_sends_once_and_keeps_the_position_id(self):
-        order_send, notify, _, opened = self.place("demo", DEMO_ACCOUNT, deals=[SimpleNamespace(position_id=777)])
-        order_send.assert_called_once()
+        broker, notify, _, opened = self.place("demo", DEMO_ACCOUNT)
+        self.assertEqual(len(broker.orders), 1)
+        self.assertEqual(broker.orders[0], {"side": "buy", "name": "XAUUSD", "lot": 0.01, "price": 2650.50, "sl": 2645.50, "tp": 2660.50, "magic": 7, "filling": "IOC"})
         self.assertIn("opened", notify.call_args.args[1])
         self.assertEqual(opened["position_id"], 777)
-        _, _, _, opened = self.place("demo", DEMO_ACCOUNT, deals=())
-        self.assertEqual(opened["position_id"], 501)  # no deal visible yet: the order ticket
 
     def test_rejected_order_is_reported_not_retried(self):
-        order_send, notify, _, opened = self.place("demo", DEMO_ACCOUNT, retcode=10027)
-        order_send.assert_called_once()
+        rejected = SimpleNamespace(ok=False, position_id=None, detail="retcode=10027 AutoTrading disabled")
+        broker, notify, _, opened = self.place("demo", DEMO_ACCOUNT, order=rejected)
+        self.assertEqual(len(broker.orders), 1)
         self.assertIn("FAILED", notify.call_args.args[1])
+        self.assertIn("10027", notify.call_args.args[1])
         self.assertIsNone(opened)
 
 
 class CheckMarketTest(unittest.TestCase):
     def run_check(self, rates, state, config=CONFIG):
-        with mock.patch.object(bot.mt5, "copy_rates_from_pos", return_value=rates), \
-                mock.patch("builtins.print"), \
-                mock.patch.object(bot.mt5, "symbol_info_tick", return_value=TICK), \
-                mock.patch.object(bot.mt5, "symbol_info", return_value=GOLD), \
-                mock.patch.object(bot.mt5, "positions_get", return_value=()), \
-                mock.patch.object(bot.mt5, "history_deals_get", return_value=()), \
-                mock.patch.object(bot, "notify"), \
+        state.setdefault("broker", FakeBroker())
+        state["broker"].candle_data = rates
+        with mock.patch("builtins.print"), mock.patch.object(bot, "notify"), \
                 mock.patch.object(bot, "place_order") as place_order:
             bot.check_market(config, state)
         return place_order
@@ -171,10 +212,9 @@ class CheckMarketTest(unittest.TestCase):
         state["last_candle_time"] -= 1  # pretend that candle just closed
         self.assertEqual(self.run_check(candles(CROSS_UP), state).call_args.args[0], "buy")
 
-    def test_rules_brain_fetches_enough_candles_and_names_the_setup(self):
+    def test_rules_brain_names_the_setup(self):
         state = {"paused": False, "last_candle_time": -1}
-        with mock.patch.object(bot.mt5, "copy_rates_from_pos", return_value=candles(CROSS_UP)) as fetch:
-            self.run_check(candles(CROSS_UP), state)
+        self.run_check(candles(CROSS_UP), state)
         self.assertEqual(state["last_decision"], "buy: ma_cross: fast MA crossed above slow MA")
 
     def test_paused_bot_does_not_order(self):
@@ -188,6 +228,11 @@ class CheckMarketTest(unittest.TestCase):
         self.run_check(weekend_old, state).assert_not_called()
         self.assertIn("market was shut", state["last_decision"])
 
+    def test_no_price_from_the_broker_skips_the_candle(self):
+        state = {"paused": False, "last_candle_time": -1, "broker": FakeBroker(tick=None)}
+        self.run_check(candles(CROSS_UP), state).assert_not_called()
+        self.assertEqual(state["last_decision"], "skipped: no price from the broker")
+
     def test_ai_brain_is_asked_only_when_a_trade_is_allowed(self):
         ai_config = dict(CONFIG, BRAIN="ai")
         rates = candles([100.0] * 5)
@@ -197,7 +242,7 @@ class CheckMarketTest(unittest.TestCase):
             decide.assert_not_called()  # a blocked candle must not cost an API call
             place_order = self.run_check(rates, {"paused": False, "last_candle_time": -1}, ai_config)
         decide.assert_called_once()
-        self.assertEqual((place_order.call_args.args[0], place_order.call_args.args[4]), ("sell", "AI: weak"))
+        self.assertEqual((place_order.call_args.args[0], place_order.call_args.args[5]), ("sell", "AI: weak"))
 
 
 class PaperTest(unittest.TestCase):
@@ -205,17 +250,15 @@ class PaperTest(unittest.TestCase):
 
     def setUp(self):
         self.journal = Journal()
+        self.broker = FakeBroker()
         self.config = dict(CONFIG, MODE="dry")
-        self.state = {"paused": False, "last_candle_time": -1, "update_offset": 0, "journal": self.journal, "run": "test"}
+        self.state = {"paused": False, "last_candle_time": -1, "update_offset": 0, "journal": self.journal,
+                      "broker": self.broker, "run": "test"}
         self.notices = []
 
     def run_check(self, rates, config=None):
-        with mock.patch.object(bot.mt5, "copy_rates_from_pos", return_value=rates), \
-                mock.patch("builtins.print"), \
-                mock.patch.object(bot.mt5, "symbol_info_tick", return_value=TICK), \
-                mock.patch.object(bot.mt5, "symbol_info", return_value=GOLD), \
-                mock.patch.object(bot.mt5, "positions_get", return_value=()), \
-                mock.patch.object(bot.mt5, "history_deals_get", return_value=()), \
+        self.broker.candle_data = rates
+        with mock.patch("builtins.print"), \
                 mock.patch.object(bot, "notify", side_effect=lambda config, text: self.notices.append(text)):
             bot.check_market(config or self.config, self.state)
 
@@ -228,9 +271,10 @@ class PaperTest(unittest.TestCase):
         self.run_check(candles(CROSS_UP))
         (trade,) = self.journal.open_trades("paper")
         self.assertEqual((trade["side"], trade["entry"], trade["sl"], trade["tp"]), ("buy", 2650.50, 2645.50, 2660.50))
-        self.assertEqual(trade["opened_at"], TICK.time)
+        self.assertEqual((trade["opened_at"], trade["brain"]), (TICK.time, "rules"))
         self.assertIn("symbol: XAUUSD", trade["snapshot"])
         self.assertEqual(self.journal.decision_counts(), {"buy": 1})
+        self.assertEqual(self.broker.orders, [])  # paper: nothing reached the broker
         self.assertTrue(self.notices[-1].startswith("[paper] buy 0.01 XAUUSD @ 2650.5"))
 
         self.run_check(candles(CROSS_UP, shift=1))
@@ -260,12 +304,12 @@ class PaperTest(unittest.TestCase):
             self.run_check(self.stop_out(shift=1), ai_config)
         reflect.assert_called_once()
         (closed,) = self.journal.closed_trades()
-        self.assertEqual(closed["lesson"], "Wait for a pullback.")
+        self.assertEqual((closed["lesson"], closed["brain"]), ("Wait for a pullback.", "ai"))
         self.assertEqual(self.journal.spend(source="bot"), 0.05)  # two decisions and one reflection
         self.assertTrue(any(notice.endswith("profit -5.00\nlesson: Wait for a pullback.") for notice in self.notices))
         # the brain bought again right after the stop-out; stop that one too, then the budget is gone
         with mock.patch.object(ai_strategy, "decide", return_value=decision) as decide, \
-                mock.patch.object(ai_strategy, "reflect", return_value=(None, "AI API error 500", 0.01)):
+                mock.patch.object(ai_strategy, "reflect", return_value=(None, "AI error: API status 500", 0.01)):
             self.run_check(self.stop_out(shift=2), dict(ai_config, AI_BUDGET_USD=0.06))
         decide.assert_not_called()
         self.assertEqual(len(self.journal.closed_trades()), 2)
@@ -273,34 +317,24 @@ class PaperTest(unittest.TestCase):
         self.assertIn("AI budget for today spent", self.state["last_decision"])
 
 
-class SettleMt5Test(unittest.TestCase):
+class SettleBrokerTest(unittest.TestCase):
     POSITION = {"side": "buy", "lot": 0.01, "entry": 2650.5, "sl": 2645.5, "tp": 2660.5, "opened_at": TICK.time - 1800, "reason": "x"}
 
-    def settle(self, positions, deals):
+    def settle(self, results):
         journal = Journal()
-        journal.open_trade("mt5", "t", "XAUUSD", self.POSITION, position_id=42)
-        state = {"paused": False, "last_candle_time": -1, "journal": journal, "run": "t"}
-
-        def deals_for(*args, **kwargs):
-            return deals if kwargs.get("position") == 42 else ()
-
-        with mock.patch.object(bot.mt5, "positions_get", return_value=positions), \
-                mock.patch.object(bot.mt5, "history_deals_get", side_effect=deals_for), \
-                mock.patch.object(bot, "notify"), mock.patch("builtins.print"):
-            bot.settle_mt5(dict(CONFIG, MODE="demo"), state)
+        journal.open_trade("mt5", "t", "XAUUSD", self.POSITION, position_id=42, brain="rules")
+        state = {"paused": False, "last_candle_time": -1, "journal": journal, "run": "t", "broker": FakeBroker(results=results)}
+        with mock.patch.object(bot, "notify"), mock.patch("builtins.print"):
+            bot.settle_broker(dict(CONFIG, MODE="demo"), state)
         return journal
 
-    def test_closed_position_is_settled_from_the_brokers_deals(self):
-        deals = [
-            SimpleNamespace(entry=bot.mt5.DEAL_ENTRY_IN, time=TICK.time - 1800, price=2650.5, profit=0.0, commission=-0.1, swap=0.0, reason=bot.mt5.DEAL_REASON_EXPERT),
-            SimpleNamespace(entry=bot.mt5.DEAL_ENTRY_OUT, time=TICK.time - 100, price=2645.5, profit=-5.0, commission=-0.1, swap=0.0, reason=bot.mt5.DEAL_REASON_SL),
-        ]
-        (trade,) = self.settle((), deals).closed_trades()
+    def test_closed_position_is_booked_from_the_brokers_result(self):
+        result = {"exit": 2645.5, "closed_at": TICK.time - 100, "profit": -5.2, "outcome": "sl"}
+        (trade,) = self.settle({42: result}).closed_trades()
         self.assertEqual((trade["exit"], trade["profit"], trade["outcome"], trade["closed_at"]), (2645.5, -5.2, "sl", TICK.time - 100))
 
-    def test_still_open_or_not_yet_in_history_waits(self):
-        self.assertEqual(self.settle((SimpleNamespace(ticket=42),), ()).closed_trades(), [])
-        self.assertEqual(self.settle((), ()).closed_trades(), [])
+    def test_still_open_waits(self):
+        self.assertEqual(self.settle({}).closed_trades(), [])
 
 
 class FlagTest(unittest.TestCase):
@@ -324,17 +358,16 @@ class FlagTest(unittest.TestCase):
 
 class ConnectionTest(unittest.TestCase):
     def test_lost_and_recovered_connection_are_reported_once_each(self):
-        state = {}
-        with mock.patch.object(bot.mt5, "terminal_info", return_value=None), \
-                mock.patch.object(bot.mt5, "initialize", return_value=False) as initialize, \
-                mock.patch.object(bot, "notify") as notify:
+        broker = FakeBroker(alive=False)
+        state = {"broker": broker}
+        with mock.patch.object(bot, "notify") as notify:
             self.assertFalse(bot.ensure_connected(CONFIG, state))
             self.assertFalse(bot.ensure_connected(CONFIG, state))
         self.assertEqual(notify.call_count, 1)
         self.assertIn("connection lost", notify.call_args.args[1])
-        self.assertEqual(initialize.call_count, 2)
-        with mock.patch.object(bot.mt5, "terminal_info", return_value=SimpleNamespace()), \
-                mock.patch.object(bot, "notify") as notify:
+        self.assertEqual(broker.connects, 2)
+        broker.alive_flag = True
+        with mock.patch.object(bot, "notify") as notify:
             self.assertTrue(bot.ensure_connected(CONFIG, state))
             self.assertTrue(bot.ensure_connected(CONFIG, state))
         self.assertEqual(notify.call_count, 1)
@@ -365,6 +398,15 @@ class TelegramTest(unittest.TestCase):
         self.assertTrue(state["stopping"])
         self.assertIn("watchdog will not restart", notify.call_args.args[1])
 
+    def test_status_reads_the_broker_and_the_journal(self):
+        journal = Journal()
+        state = {"paused": False, "update_offset": 0, "journal": journal, "broker": FakeBroker(realized=-3.5)}
+        _, notify = self.read(111, "/status", state)
+        text = notify.call_args.args[1]
+        self.assertIn("pnl_today=-3.50", text)
+        self.assertIn("open_positions=0", text)
+        self.assertIn("trades=0", text)
+
     def test_playbook_and_lessons_come_from_the_journal(self):
         journal = Journal()
         state = {"paused": False, "update_offset": 0, "journal": journal}
@@ -386,11 +428,11 @@ class ConfigTest(unittest.TestCase):
 
     def test_env_overrides_defaults_and_converts_numbers(self):
         config = self.load("# comment\nSYMBOL=GOLD\nLOT = 0.02\n")
-        self.assertEqual((config["SYMBOL"], config["LOT"], config["MODE"]), ("GOLD", 0.02, "dry"))
+        self.assertEqual((config["SYMBOL"], config["LOT"], config["MODE"], config["BROKER"]), ("GOLD", 0.02, "dry", "mt5"))
         self.assertEqual((config["AI_BUDGET_USD"], config["CONTRACT_SIZE"]), (5.0, 100.0))
 
     def test_bad_settings_stop_the_bot(self):
-        for text in ("MODE=yolo", "BRAIN=robot", "STRATEGY=nope", "SL_ATR=-1", "SL_POINTS=0", "TIMEFRAME=M7", "FILLING=NOPE", "CONTRACT_SIZE=0", "AI_BUDGET_USD=-1"):
+        for text in ("BROKER=robinhood", "MODE=yolo", "BRAIN=robot", "STRATEGY=nope", "SL_ATR=-1", "SL_POINTS=0", "TIMEFRAME=M7", "FILLING=NOPE", "CONTRACT_SIZE=0", "AI_BUDGET_USD=-1"):
             with self.assertRaises(SystemExit, msg=text):
                 self.load(text)
 

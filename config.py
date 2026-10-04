@@ -8,6 +8,7 @@ ENV_PATH = Path(__file__).with_name(".env")
 JOURNAL_PATH = Path(__file__).with_name("journal.db")
 
 DEFAULTS = {
+    "BROKER": "mt5",
     "MODE": "dry",
     "BRAIN": "rules",
     "STRATEGY": "trend_pullback",
@@ -60,6 +61,8 @@ def load_config(env_path=ENV_PATH):
                 config[key.strip()] = value.strip()
     for key, convert in NUMBER_TYPES.items():
         config[key] = convert(config[key])
+    if config["BROKER"] not in ("mt5", "ctrader"):
+        raise SystemExit(f"BROKER must be mt5 or ctrader, got {config['BROKER']!r}")
     if config["MODE"] not in ("dry", "demo", "live"):
         raise SystemExit(f"MODE must be dry, demo or live, got {config['MODE']!r}")
     if config["BRAIN"] not in ("rules", "ai", "hybrid"):

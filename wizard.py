@@ -1,4 +1,4 @@
-"""First-run setup: a few questions, the rest is read from MT5, then .env is written.
+"""First-run setup: a few questions, the rest is read from the broker, then .env is written.
 
 start.bat and train.bat run this when .env is missing; settings.bat runs it any time.
 Enter accepts the value shown in brackets. Nothing here sends an order or spends money:
@@ -7,9 +7,8 @@ the result is always MODE=dry (paper trading) until MODE is changed by hand.
 import getpass
 import sys
 
-import MetaTrader5 as mt5
-
-from config import ENV_PATH, TIMEFRAME_SECONDS
+import brokers
+from config import ENV_PATH, TIMEFRAME_SECONDS, load_config
 
 TEMPLATE_PATH = ENV_PATH.with_name(".env.example")
 
@@ -34,15 +33,6 @@ def ask_number(question, default):
 def yes(question, default=False):
     answer = ask(question + (" (Y/n)" if default else " (y/N)")).lower()
     return default if not answer else answer in ("y", "yes")
-
-
-def filling_for(flags):
-    """FILLING for .env from symbol_info.filling_mode bit flags: 1 = FOK allowed, 2 = IOC allowed."""
-    if flags & 2:
-        return "IOC"
-    if flags & 1:
-        return "FOK"
-    return "RETURN"
 
 
 def gold_like(names):
@@ -83,9 +73,8 @@ def chat_ids(updates):
     return seen
 
 
-def choose_symbol():
-    names = [symbol.name for symbol in (mt5.symbols_get() or ())]
-    candidates = gold_like(names)
+def choose_symbol(broker):
+    candidates = gold_like(broker.symbols())
     if candidates:
         print("Gold at this broker (any other symbol works too: EURUSD, GBPUSD, BTCUSD, US30 ... as Market Watch spells it):")
         for index, name in enumerate(candidates[:9], 1):
@@ -94,9 +83,9 @@ def choose_symbol():
         name = candidates[int(answer) - 1] if answer.isdigit() and 1 <= int(answer) <= len(candidates[:9]) else answer
     else:
         name = ask("Symbol name exactly as Market Watch shows it", "XAUUSD")
-    if not mt5.symbol_select(name, True) or mt5.symbol_info(name) is None:
+    if not broker.select_symbol(name) or broker.symbol(name) is None:
         print(f"  {name} is not a symbol at this broker, try again")
-        return choose_symbol()
+        return choose_symbol(broker)
     return name
 
 
@@ -149,28 +138,29 @@ def ask_telegram():
 
 def main():
     print("Bot AI Trader setup. Enter accepts the value in brackets.\n")
-    if not mt5.initialize():
-        print("Cannot reach MT5. Open the MT5 terminal, log in, then run this again.")
+    broker = brokers.load(load_config())
+    if not broker.connect():
+        print(broker.connection_hint())
         return 1
     try:
-        account = mt5.account_info()
+        account = broker.account()
         if account is not None:
-            kind = "demo" if account.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO else "REAL MONEY"
-            print(f"MT5 account {account.login} at {account.server} ({kind})\n")
-        symbol = choose_symbol()
-        info = mt5.symbol_info(symbol)
+            kind = "demo" if account.is_demo else "REAL MONEY"
+            print(f"{broker.name} account {account.login} at {account.server} ({kind})\n")
+        symbol = choose_symbol(broker)
+        info = broker.symbol(symbol)
         values = {
             "SYMBOL": symbol,
-            "CONTRACT_SIZE": f"{info.trade_contract_size:g}",
-            "FILLING": filling_for(info.filling_mode),
-            "MAX_SPREAD_POINTS": str(spread_limit(info.spread)),
+            "CONTRACT_SIZE": f"{info.contract_size:g}",
+            "FILLING": info.filling,
+            "MAX_SPREAD_POINTS": str(spread_limit(info.spread_points)),
         }
         print(
             f"\n{symbol}: contract size {values['CONTRACT_SIZE']}, {info.digits} decimals,"
-            f" minimum lot {info.volume_min:g}, filling {values['FILLING']}, spread now {info.spread} points"
+            f" minimum lot {info.min_lot:g}, filling {values['FILLING']}, spread now {info.spread_points} points"
             f" so MAX_SPREAD_POINTS={values['MAX_SPREAD_POINTS']} (all read from the broker)\n"
         )
-        values["LOT"] = ask_number("Lot size per trade", f"{info.volume_min:g}")
+        values["LOT"] = ask_number("Lot size per trade", f"{info.min_lot:g}")
         while True:
             values["TIMEFRAME"] = ask("Timeframe (M5 M15 M30 H1 H4)", "M15").upper()
             if values["TIMEFRAME"] in TIMEFRAME_SECONDS:
@@ -193,7 +183,7 @@ def main():
         print("until you change MODE to demo or live in .env yourself. Run settings.bat to redo this.")
         return 0
     finally:
-        mt5.shutdown()
+        broker.shutdown()
 
 
 if __name__ == "__main__":

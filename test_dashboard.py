@@ -29,11 +29,10 @@ class BotProcessTest(unittest.TestCase):
 
 class TextTest(unittest.TestCase):
     def test_account_and_price_lines(self):
-        mt5 = SimpleNamespace(ACCOUNT_TRADE_MODE_DEMO=0)
-        demo = SimpleNamespace(login=123, server="XM-Demo", trade_mode=0, balance=1000.0, currency="USD")
-        self.assertEqual(dashboard.account_line(demo, mt5), "MT5: 123 @ XM-Demo (demo)  balance 1000.00 USD")
-        self.assertIn("REAL MONEY", dashboard.account_line(SimpleNamespace(login=1, server="s", trade_mode=2, balance=0.0, currency="USD"), mt5))
-        self.assertEqual(dashboard.account_line(None, mt5), "MT5: connected, no account logged in")
+        demo = SimpleNamespace(login=123, server="XM-Demo", is_demo=True, balance=1000.0, currency="USD")
+        self.assertEqual(dashboard.account_line(demo, "mt5"), "mt5: 123 @ XM-Demo (demo)  balance 1000.00 USD")
+        self.assertIn("REAL MONEY", dashboard.account_line(SimpleNamespace(login=1, server="s", is_demo=False, balance=0.0, currency="USD"), "mt5"))
+        self.assertEqual(dashboard.account_line(None, "mt5"), "mt5: connected, no account logged in")
         tick = SimpleNamespace(bid=2650.20, ask=2650.50, time=3600)
         self.assertEqual(dashboard.price_line("GOLD", tick, 2), "GOLD: bid 2650.20  ask 2650.50  spread 30 pts  (01:00:00 server time)")
         self.assertIn("no price", dashboard.price_line("GOLD", None, 2))
