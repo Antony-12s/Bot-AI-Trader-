@@ -303,6 +303,25 @@ class SettleMt5Test(unittest.TestCase):
         self.assertEqual(self.settle((), ()).closed_trades(), [])
 
 
+class ConnectionTest(unittest.TestCase):
+    def test_lost_and_recovered_connection_are_reported_once_each(self):
+        state = {}
+        with mock.patch.object(bot.mt5, "terminal_info", return_value=None), \
+                mock.patch.object(bot.mt5, "initialize", return_value=False) as initialize, \
+                mock.patch.object(bot, "notify") as notify:
+            self.assertFalse(bot.ensure_connected(CONFIG, state))
+            self.assertFalse(bot.ensure_connected(CONFIG, state))
+        self.assertEqual(notify.call_count, 1)
+        self.assertIn("connection lost", notify.call_args.args[1])
+        self.assertEqual(initialize.call_count, 2)
+        with mock.patch.object(bot.mt5, "terminal_info", return_value=SimpleNamespace()), \
+                mock.patch.object(bot, "notify") as notify:
+            self.assertTrue(bot.ensure_connected(CONFIG, state))
+            self.assertTrue(bot.ensure_connected(CONFIG, state))
+        self.assertEqual(notify.call_count, 1)
+        self.assertIn("is back", notify.call_args.args[1])
+
+
 class TelegramTest(unittest.TestCase):
     def read(self, chat_id, text, state=None, **kwargs):
         update = {"update_id": 5, "message": {"chat": {"id": chat_id}, "text": text}}
@@ -321,6 +340,11 @@ class TelegramTest(unittest.TestCase):
 
     def test_backlog_is_dropped_at_startup(self):
         self.assertEqual(self.read(111, "/pause", skip_only=True)[0], {"paused": False, "update_offset": 6})
+
+    def test_stop_asks_the_loop_to_end(self):
+        state, notify = self.read(111, "/stop")
+        self.assertTrue(state["stopping"])
+        self.assertIn("watchdog will not restart", notify.call_args.args[1])
 
     def test_playbook_and_lessons_come_from_the_journal(self):
         journal = Journal()

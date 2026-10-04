@@ -26,6 +26,7 @@ report.py  <------------------------------------------+
 | `report.py` | สรุปผล: win rate, กำไร, drawdown, ค่า API, playbook, บทเรียนล่าสุด |
 | `config.py` `indicators.py` | ตั้งค่าจาก .env และอินดิเคเตอร์ Python ล้วน |
 | `start.bat` `train.bat` | ดับเบิลคลิกบน Windows: รันบอท / ฝึก AI (`setup.bat` เตรียมสภาพแวดล้อมให้ทั้งคู่) |
+| `run_forever.bat` `install_autostart.bat` | สำหรับ VPS: watchdog รีสตาร์ทบอทเองตอน crash และตั้งให้รันตอน login |
 | `DECISIONS.md` | ทำไมถึงเลือกทางนี้ |
 
 ## เริ่มใช้แบบกดจิ้ม (Windows ที่มี MT5 เปิดและ login แล้ว)
@@ -86,7 +87,20 @@ python replay.py history.csv --compare
 
 ## คำสั่ง Telegram
 
-`/status` สถานะ + สถิติ, `/pause` `/resume` หยุด/เปิดเข้าไม้ใหม่, `/playbook` กฎที่ AI เขียนให้ตัวเอง, `/lessons` บทเรียน 3 ไม้ล่าสุด
+`/status` สถานะ + สถิติ, `/pause` `/resume` หยุด/เปิดเข้าไม้ใหม่, `/stop` ปิดบอทจริงๆ (watchdog ไม่รีสตาร์ท), `/playbook` กฎที่ AI เขียนให้ตัวเอง, `/lessons` บทเรียน 3 ไม้ล่าสุด
+
+## รัน 24 ชั่วโมงบน Windows VPS ไม่ต้องมีคนเฝ้า
+
+บอทคุยกับ MT5 ผ่าน package ที่รันได้แค่บน Windows เครื่องเดียวกับ MT5 ดังนั้น "รันตลอดโดยไม่ต้องเปิดคอม" = เช่า Windows VPS (ค้นว่า forex VPS, RAM 2 GB พอ) แล้วทำตามนี้บน VPS:
+
+1. ลง Python 3.10+ (ติ๊ก Add to PATH) และ MT5 ของโบรก login ค้างไว้
+2. ก๊อป repo นี้ไปวาง ดับเบิลคลิก `start.bat` รอบแรกเพื่อสร้าง `.env` และกรอกค่า ปิดได้เมื่อเห็นว่าบอทเริ่มทำงาน
+3. ดับเบิลคลิก `install_autostart.bat` ให้ `run_forever.bat` รันเองทุกครั้งที่ login (ถ้าสร้าง task ไม่ได้ คลิกขวา Run as administrator)
+4. ให้ MT5 เปิดเองตอน login: Win+R พิมพ์ `shell:startup` แล้วลาก shortcut ของ MT5 ใส่
+5. ตั้ง auto-logon ของ Windows (`netplwiz` หรือเครื่องมือ Autologon ของ Sysinternals) เพื่อให้รีบูตแล้วกลับมาเองโดยไม่ต้อง RDP เข้าไปกด
+6. รีบูต 1 ครั้งเพื่อทดสอบ ดูว่า Telegram ได้ข้อความ "bot started"
+
+`run_forever.bat` รีสตาร์ทบอทใน 30 วินาทีหลัง crash หรือหลัง MT5 ยังไม่ขึ้นตอนบูต ถ้า MT5 หลุดกลางทางบอทจะแจ้งใน Telegram ครั้งเดียวแล้วต่อใหม่เอง สั่ง `/stop` จาก Telegram เมื่ออยากปิดจริง ถ้าออเดอร์ fail ด้วย retcode 10027 ให้กดปุ่ม Algo Trading บน MT5 ให้เขียว
 
 ## ต้องรู้ก่อน พูดตรงๆ
 

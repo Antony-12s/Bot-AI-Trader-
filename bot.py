@@ -8,12 +8,16 @@ and trade goes into journal.db (journal.py).
 Modes: dry trades on paper (virtual positions filled from the live candles, nothing is sent
 to the broker), demo and live send real orders. All three write the same journal, so the
 AI brain learns in dry mode and keeps that experience when it moves on.
+
+Unattended running: run_forever.bat restarts the bot after a crash, install_autostart.bat
+starts it at logon, /stop from Telegram ends it for good (until the next start).
 """
 import json
 import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import MetaTrader5 as mt5
 
@@ -28,6 +32,7 @@ from risk import account_error, block_reason, day_start, stop_distances, stop_le
 
 POLL_SECONDS = 5
 STALE_CANDLES = 2  # a candle that closed this many candle lengths ago is old news (market was shut)
+STOP_FLAG = Path(__file__).with_name("stop.flag")  # /stop leaves this so run_forever.bat does not restart the bot
 
 
 def load_config(env_path=ENV_PATH):
@@ -93,6 +98,9 @@ def handle_command(text, config, state):
     if command == "/resume":
         state["paused"] = False
         return "resumed"
+    if command == "/stop":
+        state["stopping"] = True
+        return "stopping: the bot exits now and the watchdog will not restart it (open positions keep their SL/TP)"
     if command == "/status":
         return status_text(config, state)
     if command == "/playbook" and journal:
@@ -133,6 +141,20 @@ def read_commands(config, state, skip_only=False):
 
 
 # --- MT5 ------------------------------------------------------------------
+
+def ensure_connected(config, state):
+    """True when the terminal answers. Otherwise tell the owner once and keep trying to reconnect."""
+    if mt5.terminal_info() is not None:
+        if state.get("disconnected"):
+            state["disconnected"] = False
+            notify(config, "MT5 connection is back")
+        return True
+    if not state.get("disconnected"):
+        state["disconnected"] = True
+        notify(config, "MT5 connection lost (terminal closed?), retrying every few seconds")
+    mt5.initialize()
+    return False
+
 
 def open_positions(config):
     positions = mt5.positions_get(symbol=config["SYMBOL"]) or ()
@@ -366,14 +388,19 @@ def main():
             "journal": journal,
             "run": f"{config['MODE']}-{datetime.now():%Y%m%d-%H%M%S}",
         }
+        if STOP_FLAG.exists():
+            STOP_FLAG.unlink()
         read_commands(config, state, skip_only=True)
         notify(config, "bot started: " + status_text(config, state))
-        while True:
+        while not state.get("stopping"):
             read_commands(config, state)
-            if config["MODE"] != "dry":
-                settle_mt5(config, state)
-            check_market(config, state)
+            if ensure_connected(config, state):
+                if config["MODE"] != "dry":
+                    settle_mt5(config, state)
+                check_market(config, state)
             time.sleep(POLL_SECONDS)
+        STOP_FLAG.touch()
+        notify(config, "bot stopped by /stop")
     except KeyboardInterrupt:
         notify(config, "bot stopped")
     except Exception as error:

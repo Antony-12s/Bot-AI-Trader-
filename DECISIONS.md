@@ -84,3 +84,11 @@
 - journal เพิ่มคอลัมน์ brain: ประสบการณ์ที่ป้อน AI นับเฉพาะไม้ที่ ai/hybrid ตัดสิน ไม้ของกฎล้วนไม่ปน
   - replay --compare ใช้ journal ชั่วคราวในหน่วยความจำ ไม่เขียนลง journal.db
 - ข้อความล้มเหลวจาก API ขึ้นต้น "AI error" เพื่อให้ replay แยก "หยุดเพราะ API พัง" กับ "AI เลือก hold" ได้
+
+## 2026-10-04 (เช้า) รันบน VPS โดยไม่มีคนเฝ้า
+
+- เลือก Windows VPS แทน web/.exe เพราะ MetaTrader5 package รันได้แค่ Windows เครื่องเดียวกับ MT5 web บน cloud ทั่วไปทำไม่ได้ และ .exe ไม่ได้อะไรเพิ่มเมื่อเครื่องมี Python อยู่แล้ว
+- run_forever.bat เป็น watchdog ธรรมดา รีสตาร์ททุก 30 วินาทีหลัง crash ไม่ใช้ service/NSSM เพื่อให้เห็นหน้าต่าง log และไม่เพิ่มเครื่องมือ
+- /stop เขียนไฟล์ stop.flag ให้ watchdog รู้ว่าเจ้าของสั่งปิด ไม่ใช่ crash
+- บอทเช็ค terminal_info ทุกรอบ ถ้า MT5 หาย แจ้ง Telegram ครั้งเดียวแล้ว initialize ใหม่เรื่อยๆ ไม่ crash ไม่ spam
+- Task Scheduler แบบ onlogon + auto-logon ของ Windows: ง่ายสุดที่รีบูตแล้วกลับมาเองได้ทั้ง MT5 และบอท
