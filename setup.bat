@@ -10,11 +10,9 @@ if not exist ".venv\Scripts\python.exe" (
 set "PY=%~dp0.venv\Scripts\python.exe"
 "%PY%" -m pip install -q -r requirements.txt || exit /b 1
 if not exist ".env" (
-    copy .env.example .env >nul
     echo.
-    echo First run: .env was created. Fill in MODE, SYMBOL, LOT, CONTRACT_SIZE, the API key
-    echo and Telegram, then save and close Notepad. The program continues afterwards.
+    echo First run: a few questions, the rest is read from MT5. Keep MT5 open and logged in.
     echo.
-    notepad .env
+    "%PY%" wizard.py || exit /b 1
 )
 exit /b 0

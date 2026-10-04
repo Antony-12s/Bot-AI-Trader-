@@ -25,26 +25,29 @@ report.py  <------------------------------------------+
 | `export_history.py` | ดึงแท่งจาก MT5 เป็น CSV (รันบน Windows ที่เปิด MT5) |
 | `report.py` | สรุปผล: win rate, กำไร, drawdown, ค่า API, playbook, บทเรียนล่าสุด |
 | `config.py` `indicators.py` | ตั้งค่าจาก .env และอินดิเคเตอร์ Python ล้วน |
-| `start.bat` `train.bat` | ดับเบิลคลิกบน Windows: รันบอท / ฝึก AI (`setup.bat` เตรียมสภาพแวดล้อมให้ทั้งคู่) |
+| `start.bat` `train.bat` `settings.bat` | ดับเบิลคลิกบน Windows: รันบอท / ฝึก AI / แก้ค่า (`setup.bat` เตรียมสภาพแวดล้อมให้) |
+| `wizard.py` | ถาม-ตอบรอบแรก อ่าน symbol, contract size, filling จาก MT5 แล้วเขียน `.env` ให้ |
 | `run_forever.bat` `install_autostart.bat` | สำหรับ VPS: watchdog รีสตาร์ทบอทเองตอน crash และตั้งให้รันตอน login |
 | `DECISIONS.md` | ทำไมถึงเลือกทางนี้ |
 
-## เริ่มใช้แบบกดจิ้ม (Windows ที่มี MT5 เปิดและ login แล้ว)
+## เริ่มใช้ 3 ขั้น (Windows)
 
-ต้องมี Python 3.10 ขึ้นไปจาก python.org (ติ๊ก "Add to PATH" ตอนลง) แค่นั้น
+1. ลง **Python 3.10+** จาก python.org ติ๊ก "Add to PATH"
+2. ลง **MT5 ของโบรก** (ต้องเป็น MT5 ไม่ใช่ MT4) เปิดแล้ว login ค้างไว้ บัญชี demo ก็ได้
+3. ดับเบิลคลิก **`start.bat`**
 
-- ดับเบิลคลิก **`start.bat`** รันบอท รอบแรกมันจะสร้าง `.env` แล้วเปิด Notepad ให้กรอก พอเซฟปิดบอทก็เริ่มเอง
-- ดับเบิลคลิก **`train.bat`** ฝึก AI ครบลูป: ดึงแท่งจาก MT5, replay บนกระดาษจนครบงบ, แล้วโชว์รายงาน
+รอบแรกมันถาม 3-4 คำถามในหน้าต่างเดียว (symbol เลือกจากรายการที่มันหาเจอใน MT5, lot, timeframe, ขาดทุนต่อวันสูงสุด) ที่เหลือเช่น contract size, จำนวนทศนิยม, filling mode มันอ่านจากโบรกเอง ถามท้ายว่าจะใช้ AI ไหม (ต้องมี API key) และ Telegram ไหม (ข้ามได้) แล้วบอทเริ่มทำงานเลย อยากเปลี่ยนค่าทีหลังจิ้ม `settings.bat`
 
-ทั้งสองไฟล์สร้าง `.venv` และลง library ให้เอง ปิดหน้าต่างหรือกด Ctrl+C เพื่อหยุด
+ค่าเริ่มต้นคือ `MODE=dry`: paper trading ไม่ส่งอะไรให้โบรก ไม่มีเงินจริงขยับ จนกว่ามุงจะแก้ `MODE` ใน `.env` เอง
 
-ค่าเริ่มต้นคือ `MODE=dry` และ `BRAIN=rules`: ไม่ส่งอะไรให้โบรก ไม่เสียค่า API
+- **`train.bat`** ฝึก AI ครบลูป: ดึงแท่งจาก MT5, เทียบกลยุทธ์ฟรี, replay บนกระดาษจนครบงบ, โชว์รายงาน
+- ทุก .bat สร้าง `.venv` และลง library ให้เอง ปิดหน้าต่างหรือ Ctrl+C เพื่อหยุด
 
 แบบพิมพ์เองถ้าชอบ:
 
 ```
 pip install -r requirements.txt
-copy .env.example .env      # แก้ SYMBOL, LOT, SL/TP, CONTRACT_SIZE, Telegram, API key
+python wizard.py            # หรือ copy .env.example .env แล้วแก้เอง
 python -m unittest          # ไม่ต้องมี MT5 ก็รันได้บน Windows
 python bot.py
 ```

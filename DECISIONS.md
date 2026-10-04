@@ -92,3 +92,7 @@
 - /stop เขียนไฟล์ stop.flag ให้ watchdog รู้ว่าเจ้าของสั่งปิด ไม่ใช่ crash
 - บอทเช็ค terminal_info ทุกรอบ ถ้า MT5 หาย แจ้ง Telegram ครั้งเดียวแล้ว initialize ใหม่เรื่อยๆ ไม่ crash ไม่ spam
 - Task Scheduler แบบ onlogon + auto-logon ของ Windows: ง่ายสุดที่รีบูตแล้วกลับมาเองได้ทั้ง MT5 และบอท
+- wizard.py แทนการเปิด Notepad แก้ .env: ถาม 3-4 ข้อ ที่เหลือ (symbol ที่มี, contract size, digits, filling mode จาก filling_mode flags, lot ต่ำสุด) อ่านจาก MT5
+  - เหตุผล: ผู้ใช้บอกว่าใช้งานยาก และค่าที่ต้องเดา (ชื่อ symbol ของ XM เป็น GOLD, filling mode) คือจุดพังบ่อยสุด
+  - เช็ค API key ด้วย models.list ซึ่งฟรี ปฏิเสธก็รู้ทันที ไม่ต้องรอ replay ล้ม 3 ครั้ง
+  - หา Telegram chat id เองจาก getUpdates หลังผู้ใช้ทักบอท ไม่ต้องไปอ่าน console
