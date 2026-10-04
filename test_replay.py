@@ -26,8 +26,9 @@ def candle(index, close, high=None, low=None, open_=None, spread=30):
     }
 
 
-def flat_then_breakout(length=260, needed=strategies.CANDLES_NEEDED):
+def flat_then_breakout(length=None, needed=strategies.CANDLES_NEEDED):
     """Flat at 2000, one candle up to 2010 (MA cross), the next candle runs to the target."""
+    length = length or needed + 60
     candles = [candle(index, 2000.0) for index in range(length)]
     jump = needed + 5
     candles[jump] = candle(jump, 2010.0, high=2010.0, low=2000.0)
@@ -66,7 +67,7 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual(journal.open_trades(), [])
 
     def test_ai_brain_stops_at_the_budget_and_learns_from_each_trade(self):
-        candles, _ = flat_then_breakout(length=360, needed=ai_strategy.CANDLES_NEEDED)
+        candles, _ = flat_then_breakout(needed=ai_strategy.CANDLES_NEEDED)
         journal = Journal()
         config = dict(CONFIG, BRAIN="ai", AI_BUDGET_USD=2.5)
         decision = ai_strategy.Decision(None, "AI: waiting", 1.0)
@@ -86,7 +87,7 @@ class ReplayTest(unittest.TestCase):
         self.assertIn("1 closed trades", journal.experience_text())
 
     def test_hybrid_asks_only_when_a_setup_fires(self):
-        candles, jump = flat_then_breakout(length=360, needed=ai_strategy.CANDLES_NEEDED)
+        candles, jump = flat_then_breakout(needed=ai_strategy.CANDLES_NEEDED)
         journal = Journal()
         decision = ai_strategy.Decision("buy", "AI: taking the cross", 0.2)
         with mock.patch.object(ai_strategy, "decide", return_value=decision) as decide, \
@@ -119,7 +120,7 @@ class ReplayTest(unittest.TestCase):
         self.assertIn("ma_cross", text)
 
     def test_repeated_ai_failures_abort_the_replay(self):
-        candles, _ = flat_then_breakout(length=360, needed=ai_strategy.CANDLES_NEEDED)
+        candles, _ = flat_then_breakout(needed=ai_strategy.CANDLES_NEEDED)
         failure = ai_strategy.Decision(None, "AI error: key rejected, check ANTHROPIC_API_KEY in .env", 0.0)
         with mock.patch.object(ai_strategy, "decide", return_value=failure) as decide:
             stopped = replay.replay(candles, dict(CONFIG, BRAIN="ai"), Journal(), "r5", digits=2, log=lambda line: None)
