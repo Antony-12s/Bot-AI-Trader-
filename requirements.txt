@@ -1,3 +1,5 @@
 MetaTrader5; sys_platform == "win32"
+# IANA time zones for mr_intraday.py / backtest_mr.py; Windows has none built in
+tzdata; sys_platform == "win32"
 anthropic
 ctrader-open-api
