@@ -41,6 +41,8 @@ report.py  <------------------------------------------+
 
 ค่าเริ่มต้นคือ `MODE=dry`: paper trading ไม่ส่งอะไรให้โบรก ไม่มีเงินจริงขยับ จนกว่ามุงจะแก้ `MODE` ใน `.env` เอง
 
+ไม่จำกัดแค่ทอง: `SYMBOL=` เป็นอะไรก็ได้ที่โบรกมีใน Market Watch (EURUSD, GBPUSD, USDJPY, BTCUSD, US30 ...) wizard อ่าน contract size, ทศนิยม, lot ต่ำสุด, filling และ spread ของ symbol นั้นมาตั้งค่าให้ บอท 1 ตัวเทรด 1 symbol อยากเทรดหลายตัวก็ก๊อปโฟลเดอร์แยก (journal และ .env ของใครของมัน) คริปโตบน exchange ตรง (Binance ฯลฯ) ยังไม่รองรับ ต้องเป็น CFD ผ่าน MT5
+
 - **`dashboard.bat`** หน้าต่างเดียวจบ: ไฟเขียว/แดงว่าต่อ MT5 ติดไหม, ราคาสด, ปุ่ม Start / Stop / Pause / Report / Train / Settings, สถิติ, playbook, log ของบอท MT5 ย่อทิ้งไว้ได้เลย
 - **`train.bat`** ฝึก AI ครบลูป: ดึงแท่งจาก MT5, เทียบกลยุทธ์ฟรี, replay บนกระดาษจนครบงบ, โชว์รายงาน
 - ทุก .bat สร้าง `.venv` และลง library ให้เอง ปิดหน้าต่างหรือ Ctrl+C เพื่อหยุด

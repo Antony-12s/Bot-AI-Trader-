@@ -51,6 +51,15 @@ def gold_like(names):
     return sorted(hits, key=lambda name: (len(name), name))
 
 
+def spread_limit(spread_points, floor=50):
+    """MAX_SPREAD_POINTS for a symbol whose spread is spread_points right now.
+
+    Three times the current spread, never below the gold-sized default: BTCUSD or an exotic
+    pair quoted with many decimals would otherwise be "spread too wide" on every candle.
+    """
+    return max(floor, 3 * int(spread_points))
+
+
 def render_env(template, values):
     """The .env.example text with every KEY= line named in values filled in; comments stay."""
     lines = []
@@ -78,7 +87,7 @@ def choose_symbol():
     names = [symbol.name for symbol in (mt5.symbols_get() or ())]
     candidates = gold_like(names)
     if candidates:
-        print("Gold at this broker:")
+        print("Gold at this broker (any other symbol works too: EURUSD, GBPUSD, BTCUSD, US30 ... as Market Watch spells it):")
         for index, name in enumerate(candidates[:9], 1):
             print(f"  {index}. {name}")
         answer = ask("Pick a number, or type another symbol name exactly as Market Watch shows it", "1")
@@ -154,10 +163,12 @@ def main():
             "SYMBOL": symbol,
             "CONTRACT_SIZE": f"{info.trade_contract_size:g}",
             "FILLING": filling_for(info.filling_mode),
+            "MAX_SPREAD_POINTS": str(spread_limit(info.spread)),
         }
         print(
             f"\n{symbol}: contract size {values['CONTRACT_SIZE']}, {info.digits} decimals,"
-            f" minimum lot {info.volume_min:g}, filling {values['FILLING']} (all read from the broker)\n"
+            f" minimum lot {info.volume_min:g}, filling {values['FILLING']}, spread now {info.spread} points"
+            f" so MAX_SPREAD_POINTS={values['MAX_SPREAD_POINTS']} (all read from the broker)\n"
         )
         values["LOT"] = ask_number("Lot size per trade", f"{info.volume_min:g}")
         while True:

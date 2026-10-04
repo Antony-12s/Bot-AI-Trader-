@@ -10,6 +10,11 @@ class WizardTest(unittest.TestCase):
         self.assertEqual(wizard.filling_for(1), "FOK")
         self.assertEqual(wizard.filling_for(0), "RETURN")
 
+    def test_spread_limit_scales_with_the_symbol(self):
+        self.assertEqual(wizard.spread_limit(12), 50)  # tight gold spread keeps the default
+        self.assertEqual(wizard.spread_limit(30), 90)
+        self.assertEqual(wizard.spread_limit(2400), 7200)  # a crypto CFD quoted in cents
+
     def test_gold_like_symbols_plainest_first(self):
         names = ["EURUSD", "GOLDmicro", "GOLD", "XAUUSD.m", "XAUEUR", "US30"]
         self.assertEqual(wizard.gold_like(names), ["GOLD", "XAUEUR", "XAUUSD.m", "GOLDmicro"])
