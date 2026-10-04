@@ -1,17 +1,6 @@
 import unittest
 
 import indicators
-import strategy
-
-
-class StrategyTest(unittest.TestCase):
-    def test_cross_up_buys_cross_down_sells(self):
-        self.assertEqual(strategy.decide([100] * 30 + [110])[0], "buy")
-        self.assertEqual(strategy.decide([100] * 30 + [90])[0], "sell")
-
-    def test_no_cross_or_too_little_data_gives_nothing(self):
-        self.assertIsNone(strategy.decide([100] * 31)[0])
-        self.assertIsNone(strategy.decide([100, 110])[0])
 
 
 class IndicatorTest(unittest.TestCase):
@@ -45,3 +34,25 @@ class IndicatorTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CandleIndicatorTest(unittest.TestCase):
+    def candles(self, rows):
+        return [{"time": index * 900, "open": o, "high": h, "low": l, "close": c, "spread": 30} for index, (o, h, l, c) in enumerate(rows)]
+
+    def test_true_range_and_atr(self):
+        candles = self.candles([(10, 12, 9, 11), (11, 13, 10, 12), (12, 20, 12, 19), (19, 19, 10, 11)])
+        self.assertEqual(indicators.true_ranges(candles), [3, 8, 9])  # bar range, gap-up high vs close 12, bar range
+        self.assertEqual(indicators.atr(candles, period=2), [5.5, 7.25])  # (3+8)/2 then (5.5 + 9)/2
+        self.assertEqual(indicators.atr(candles, period=3), [20 / 3])
+        self.assertEqual(indicators.atr(candles, period=4), [])
+
+    def test_resample_merges_clock_aligned_blocks(self):
+        rows = [(1, 2, 0.5, 1.5), (1.5, 3, 1, 2), (2, 2.5, 1, 1.2), (1.2, 1.4, 0.8, 1.0), (1.0, 1.1, 0.9, 1.05)]
+        candles = self.candles(rows)
+        for candle in candles:
+            candle["time"] += 1800  # start at half past: the first block is a partial hour
+        bars = indicators.resample(candles, factor=4, seconds=900)
+        self.assertEqual([bar["time"] for bar in bars], [0, 3600])  # two candles in the first hour, three in the next
+        self.assertEqual(bars[0], {"time": 0, "open": 1, "high": 3, "low": 0.5, "close": 2, "spread": 30})
+        self.assertEqual(bars[1], {"time": 3600, "open": 2, "high": 2.5, "low": 0.8, "close": 1.05, "spread": 30})

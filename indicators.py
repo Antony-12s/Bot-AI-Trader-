@@ -67,3 +67,48 @@ def bollinger(prices, period=20, deviations=2.0):
     lower = [mean - width for mean, width in zip(middle, widths)]
     upper = [mean + width for mean, width in zip(middle, widths)]
     return lower, middle, upper
+
+
+# --- candle-based ------------------------------------------------------------------
+# These take candles: mappings with open, high, low, close (and time for resample), oldest first.
+
+def true_ranges(candles):
+    """True range of every candle after the first: the widest of the bar and the gap from the last close."""
+    return [
+        max(now["high"] - now["low"], abs(now["high"] - before["close"]), abs(now["low"] - before["close"]))
+        for before, now in zip(candles, candles[1:])
+    ]
+
+
+def atr(candles, period=14):
+    """Average True Range with Wilder smoothing; empty until period + 1 candles exist."""
+    ranges = true_ranges(candles)
+    if len(ranges) < period:
+        return []
+    values = [sum(ranges[:period]) / period]
+    for value in ranges[period:]:
+        values.append((values[-1] * (period - 1) + value) / period)
+    return values
+
+
+def resample(candles, factor, seconds):
+    """Merge candles of `seconds` length into bars `factor` times longer, aligned to the clock.
+
+    The newest bar may still be forming. Candles are dicts; the result has the same keys.
+    """
+    bars = []
+    span = factor * seconds
+    for candle in candles:
+        start = candle["time"] - candle["time"] % span
+        if bars and bars[-1]["time"] == start:
+            bar = bars[-1]
+            bar["high"] = max(bar["high"], candle["high"])
+            bar["low"] = min(bar["low"], candle["low"])
+            bar["close"] = candle["close"]
+            bar["spread"] = candle["spread"]
+        else:
+            bars.append({
+                "time": start, "open": candle["open"], "high": candle["high"], "low": candle["low"],
+                "close": candle["close"], "spread": candle["spread"],
+            })
+    return bars

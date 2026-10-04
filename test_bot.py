@@ -13,12 +13,16 @@ from risk import SECONDS_PER_DAY
 CONFIG = {
     "MODE": "demo",
     "BRAIN": "rules",
+    "STRATEGY": "ma_cross",
     "ANTHROPIC_API_KEY": "",
     "AI_BUDGET_USD": 5.0,
     "SYMBOL": "XAUUSD",
     "TIMEFRAME": "M15",
     "LOT": 0.01,
     "CONTRACT_SIZE": 100.0,
+    "SL_ATR": 0.0,
+    "TP_ATR": 0.0,
+    "ATR_PERIOD": 14,
     "SL_POINTS": 500,
     "TP_POINTS": 1000,
     "MAX_DAILY_LOSS": 20.0,
@@ -95,6 +99,14 @@ class OrderTest(unittest.TestCase):
         self.assertEqual((order["price"], order["sl"], order["tp"]), (2650.20, 2655.20, 2640.20))
         self.assertEqual(order["type"], bot.mt5.ORDER_TYPE_SELL)
 
+    def test_atr_stops_respect_the_brokers_minimum_distance(self):
+        atr_config = dict(CONFIG, SL_ATR=1.5, TP_ATR=3.0)
+        order = bot.build_order("buy", TICK, GOLD, atr_config, atr_value=2.0, spread_points=30)
+        self.assertEqual((order["sl"], order["tp"]), (2647.50, 2656.50))  # 300 / 600 points
+        strict = SimpleNamespace(point=0.01, digits=2, trade_stops_level=400)
+        order = bot.build_order("buy", TICK, strict, atr_config, atr_value=2.0, spread_points=30)
+        self.assertEqual((order["sl"], order["tp"]), (2646.50, 2656.50))  # stop pushed out to 400 points
+
     def place(self, mode, account, retcode=bot.mt5.TRADE_RETCODE_DONE, deals=()):
         result = SimpleNamespace(retcode=retcode, comment="fake", order=501, deal=901)
         with mock.patch.object(bot.mt5, "account_info", return_value=account), \
@@ -158,6 +170,12 @@ class CheckMarketTest(unittest.TestCase):
         self.run_check(candles(CROSS_UP), state).assert_not_called()  # same candle again
         state["last_candle_time"] -= 1  # pretend that candle just closed
         self.assertEqual(self.run_check(candles(CROSS_UP), state).call_args.args[0], "buy")
+
+    def test_rules_brain_fetches_enough_candles_and_names_the_setup(self):
+        state = {"paused": False, "last_candle_time": -1}
+        with mock.patch.object(bot.mt5, "copy_rates_from_pos", return_value=candles(CROSS_UP)) as fetch:
+            self.run_check(candles(CROSS_UP), state)
+        self.assertEqual(state["last_decision"], "buy: ma_cross: fast MA crossed above slow MA")
 
     def test_paused_bot_does_not_order(self):
         state = {"paused": True, "last_candle_time": -1}
@@ -329,7 +347,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((config["AI_BUDGET_USD"], config["CONTRACT_SIZE"]), (5.0, 100.0))
 
     def test_bad_settings_stop_the_bot(self):
-        for text in ("MODE=yolo", "BRAIN=robot", "SL_POINTS=0", "TIMEFRAME=M7", "FILLING=NOPE", "CONTRACT_SIZE=0", "AI_BUDGET_USD=-1"):
+        for text in ("MODE=yolo", "BRAIN=robot", "STRATEGY=nope", "SL_ATR=-1", "SL_POINTS=0", "TIMEFRAME=M7", "FILLING=NOPE", "CONTRACT_SIZE=0", "AI_BUDGET_USD=-1"):
             with self.assertRaises(SystemExit, msg=text):
                 self.load(text)
 

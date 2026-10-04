@@ -7,13 +7,13 @@ import ai_strategy
 import export_history
 import replay
 import report
-import strategy
+import strategies
 from journal import Journal
 
 CONFIG = {
-    "BRAIN": "rules", "ANTHROPIC_API_KEY": "", "AI_BUDGET_USD": 5.0, "SYMBOL": "XAUUSD", "TIMEFRAME": "M15",
-    "LOT": 0.01, "CONTRACT_SIZE": 100.0, "SL_POINTS": 500, "TP_POINTS": 1000, "MAX_DAILY_LOSS": 20.0,
-    "MAX_SPREAD_POINTS": 50,
+    "BRAIN": "rules", "STRATEGY": "ma_cross", "ANTHROPIC_API_KEY": "", "AI_BUDGET_USD": 5.0, "SYMBOL": "XAUUSD",
+    "TIMEFRAME": "M15", "LOT": 0.01, "CONTRACT_SIZE": 100.0, "SL_ATR": 0.0, "TP_ATR": 0.0, "ATR_PERIOD": 14,
+    "SL_POINTS": 500, "TP_POINTS": 1000, "MAX_DAILY_LOSS": 20.0, "MAX_SPREAD_POINTS": 50,
 }
 START = 1_700_000_000
 
@@ -26,7 +26,7 @@ def candle(index, close, high=None, low=None, open_=None, spread=30):
     }
 
 
-def flat_then_breakout(length=200, needed=strategy.CANDLES_NEEDED):
+def flat_then_breakout(length=260, needed=strategies.CANDLES_NEEDED):
     """Flat at 2000, one candle up to 2010 (MA cross), the next candle runs to the target."""
     candles = [candle(index, 2000.0) for index in range(length)]
     jump = needed + 5
@@ -57,7 +57,7 @@ class ReplayTest(unittest.TestCase):
         self.assertIn("net: +10.00", text)
 
     def test_position_left_open_at_the_end_is_booked_at_the_last_close(self):
-        candles, jump = flat_then_breakout(length=strategy.CANDLES_NEEDED + 7)
+        candles, jump = flat_then_breakout(length=strategies.CANDLES_NEEDED + 7)
         candles[-1] = candle(len(candles) - 1, 2012.0, open_=2010.0, high=2013.0, low=2009.0)  # never reaches 2020.30
         journal = Journal()
         replay.replay(candles, CONFIG, journal, "r2", digits=2, log=lambda line: None)
@@ -66,7 +66,7 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual(journal.open_trades(), [])
 
     def test_ai_brain_stops_at_the_budget_and_learns_from_each_trade(self):
-        candles, _ = flat_then_breakout(needed=ai_strategy.CANDLES_NEEDED)
+        candles, _ = flat_then_breakout(length=360, needed=ai_strategy.CANDLES_NEEDED)
         journal = Journal()
         config = dict(CONFIG, BRAIN="ai", AI_BUDGET_USD=2.5)
         decision = ai_strategy.Decision(None, "AI: waiting", 1.0)
@@ -82,11 +82,45 @@ class ReplayTest(unittest.TestCase):
             replay.replay(candles, dict(CONFIG, BRAIN="ai"), journal, "r4", digits=2, log=lambda line: None)
         (trade,) = journal.closed_trades(run="r4")  # sold the flat market, stopped out by the breakout candle
         self.assertEqual((trade["side"], trade["outcome"], trade["lesson"]), ("sell", "sl", "Never fade a breakout."))
-        self.assertEqual((trade["entry"], trade["exit"], trade["profit"]), (2000.0, 2005.0, -5.0))
+        self.assertEqual((trade["entry"], trade["exit"], trade["profit"], trade["brain"]), (2000.0, 2005.0, -5.0, "ai"))
+        self.assertIn("1 closed trades", journal.experience_text())
+
+    def test_hybrid_asks_only_when_a_setup_fires(self):
+        candles, jump = flat_then_breakout(length=360, needed=ai_strategy.CANDLES_NEEDED)
+        journal = Journal()
+        decision = ai_strategy.Decision("buy", "AI: taking the cross", 0.2)
+        with mock.patch.object(ai_strategy, "decide", return_value=decision) as decide, \
+                mock.patch.object(ai_strategy, "reflect", return_value=("Fine trade.", None, 0.05)):
+            replay.replay(candles, dict(CONFIG, BRAIN="hybrid"), journal, "r6", digits=2, log=lambda line: None)
+        self.assertEqual(decide.call_count, 1)  # one MA cross in the whole file
+        self.assertEqual(decide.call_args.kwargs["candidates"], [("ma_cross", "buy", "fast MA crossed above slow MA")])
+        (trade,) = journal.closed_trades(run="r6")
+        self.assertEqual((trade["outcome"], trade["profit"], trade["brain"], trade["lesson"]), ("tp", 10.0, "hybrid", "Fine trade."))
+        self.assertEqual(journal.decision_counts(run="r6")["hold"], len(candles) - ai_strategy.CANDLES_NEEDED - 2)
+
+    def test_atr_stops_follow_the_breakout_candles_range(self):
+        candles, jump = flat_then_breakout()
+        journal = Journal()
+        replay.replay(candles, dict(CONFIG, SL_ATR=1.5, TP_ATR=3.0), journal, "r7", digits=2, log=lambda line: None)
+        (trade,) = journal.closed_trades(run="r7")
+        # ATR(14) after one 10-point candle among flat ones = 10/14: stop 107 points, target 214 points
+        self.assertEqual((trade["entry"], trade["sl"], trade["tp"]), (2010.30, 2009.23, 2012.44))
+        self.assertEqual((trade["outcome"], trade["profit"]), ("sl", -1.07))  # the wide candle spans both: stop first
+
+    def test_compare_runs_every_strategy_on_throwaway_journals(self):
+        candles, _ = flat_then_breakout()
+        rows = replay.compare(candles, CONFIG, digits=2)
+        self.assertEqual([name for name, _ in rows], list(strategies.STRATEGIES) + ["all"])
+        by_name = dict(rows)
+        self.assertEqual(by_name["ma_cross"]["trades"], 1)
+        self.assertEqual(by_name["bollinger_breakout"]["trades"], 1)  # flat bands, then the jump
+        text = replay.format_comparison(rows, CONFIG)
+        self.assertIn("stops: 500 / 1000 points", text)
+        self.assertIn("ma_cross", text)
 
     def test_repeated_ai_failures_abort_the_replay(self):
-        candles, _ = flat_then_breakout()
-        failure = ai_strategy.Decision(None, "AI key rejected, check ANTHROPIC_API_KEY in .env", 0.0)
+        candles, _ = flat_then_breakout(length=360, needed=ai_strategy.CANDLES_NEEDED)
+        failure = ai_strategy.Decision(None, "AI error: key rejected, check ANTHROPIC_API_KEY in .env", 0.0)
         with mock.patch.object(ai_strategy, "decide", return_value=failure) as decide:
             stopped = replay.replay(candles, dict(CONFIG, BRAIN="ai"), Journal(), "r5", digits=2, log=lambda line: None)
         self.assertEqual((stopped, decide.call_count), ("ai failures", replay.MAX_AI_FAILURES))

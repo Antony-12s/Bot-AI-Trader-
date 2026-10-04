@@ -36,6 +36,10 @@ def format_report(journal, source=None, run=None, lessons=5):
         for side, part in totals["by_side"].items():
             lines.append(f"{side}s: {part['trades']} trades, {part['win_rate']:.0%} wins, net {part['net']:+.2f}")
         lines.append("outcomes: " + ", ".join(f"{name} {count}" for name, count in sorted(totals["outcomes"].items())))
+        brains = {}
+        for trade in trades:
+            brains[trade.get("brain") or "unknown"] = brains.get(trade.get("brain") or "unknown", 0) + 1
+        lines.append("decided by: " + ", ".join(f"{name} {count}" for name, count in sorted(brains.items())))
     else:
         lines.append("trades: none closed yet")
     open_count = len([t for t in journal.open_trades(source) if run is None or t["run"] == run])

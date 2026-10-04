@@ -4,8 +4,13 @@ from unittest import mock
 
 import ai_strategy
 
-CONFIG = {"ANTHROPIC_API_KEY": "", "SYMBOL": "XAUUSD", "TIMEFRAME": "M15"}
-CLOSES = [2000 + index * 0.5 for index in range(ai_strategy.CANDLES_NEEDED)]
+CONFIG = {"ANTHROPIC_API_KEY": "", "SYMBOL": "XAUUSD", "TIMEFRAME": "M15", "ATR_PERIOD": 14}
+CANDLES = [
+    {"time": 1_700_000_000 + index * 900, "open": 2000 + index * 0.5, "high": 2001 + index * 0.5,
+     "low": 1999.5 + index * 0.5, "close": 2000.5 + index * 0.5, "spread": 30}
+    for index in range(ai_strategy.CANDLES_NEEDED)
+]
+SETUPS = [("trend_pullback", "buy", "uptrend, pullback to EMA20 and a bullish close")]
 USAGE = SimpleNamespace(input_tokens=1000, output_tokens=500, cache_creation_input_tokens=0, cache_read_input_tokens=0)
 TRADE = {
     "symbol": "XAUUSD", "side": "sell", "lot": 0.01, "entry": 2000.0, "sl": 2005.0, "tp": 1990.0,
@@ -28,10 +33,10 @@ def fake_call(reply_text, stop_reason="end_turn", error=None, usage=None):
 
 
 class DecideTest(unittest.TestCase):
-    def ask(self, reply_text='{"action": "buy", "reason": "trend up"}', experience="", **kwargs):
+    def ask(self, reply_text='{"action": "buy", "reason": "trend up"}', experience="", candidates=None, **kwargs):
         patcher, create = fake_call(reply_text, **kwargs)
         try:
-            return ai_strategy.decide(CLOSES, CONFIG, experience), create
+            return ai_strategy.decide(CANDLES, CONFIG, experience, candidates), create
         finally:
             patcher.stop()
 
@@ -42,8 +47,27 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(request["model"], "claude-opus-5-5")
         self.assertEqual(request["fallbacks"], "default")
         self.assertEqual(request["output_config"]["format"]["schema"], ai_strategy.DECISION_SCHEMA)
-        self.assertIn("symbol: XAUUSD", request["messages"][0]["content"])
-        self.assertIn("rsi_14: ", request["messages"][0]["content"])
+        content = request["messages"][0]["content"]
+        self.assertIn("symbol: XAUUSD", content)
+        self.assertIn("last closed candle: ", content)
+        self.assertIn("broker server time, spread 30 points", content)
+        self.assertIn("rsi_14: ", content)
+        self.assertIn("atr_14: ", content)
+        self.assertIn("candles as open/high/low/close", content)
+        self.assertIn("higher timeframe (60-minute bars", content)
+        self.assertIn("trend up", content)
+        self.assertNotIn("Setups the bot's rules found", content)
+
+    def test_hybrid_may_only_take_a_proposed_direction(self):
+        decision, create = self.ask(candidates=SETUPS)
+        self.assertEqual(decision, ("buy", "AI: trend up", 0.0))
+        content = create.call_args.kwargs["messages"][0]["content"]
+        self.assertIn("Setups the bot's rules found on this candle:\n- trend_pullback: buy (uptrend", content)
+        decision, _ = self.ask('{"action": "sell", "reason": "looks heavy"}', candidates=SETUPS)
+        self.assertIsNone(decision.signal)
+        self.assertEqual(decision.reason, "AI: wanted to sell without a setup, held instead; looks heavy")
+        decision, _ = self.ask('{"action": "hold", "reason": "weak setup"}', candidates=SETUPS)
+        self.assertEqual(decision, (None, "AI: weak setup", 0.0))
 
     def test_experience_comes_before_the_market(self):
         _, create = self.ask(experience="Your track record: 3 trades")
@@ -73,11 +97,12 @@ class DecideTest(unittest.TestCase):
         for failure in failures:
             decision, _ = self.ask(**dict({"usage": USAGE}, **failure))
             self.assertIsNone(decision.signal, msg=failure)
+            self.assertTrue(decision.reason.startswith("AI error"), msg=decision.reason)
             self.assertEqual(decision.cost_usd, 0.0 if "error" in failure else 0.014, msg=failure)
 
     def test_too_few_candles_skips_the_api_call(self):
         with mock.patch.object(ai_strategy.anthropic, "Anthropic") as client_class:
-            self.assertIsNone(ai_strategy.decide([1.0] * 10, CONFIG)[0])
+            self.assertIsNone(ai_strategy.decide(CANDLES[:10], CONFIG)[0])
         client_class.assert_not_called()
 
 
@@ -133,7 +158,7 @@ class LearnTest(unittest.TestCase):
         position = {"side": "buy", "lot": 0.01, "entry": 2000.0, "sl": 1995.0, "tp": 2010.0, "opened_at": 0, "reason": "r"}
         trade = None
         for index in range(count):
-            trade_id = self.journal.open_trade("replay", "r", "XAUUSD", dict(position, opened_at=index * 900))
+            trade_id = self.journal.open_trade("replay", "r", "XAUUSD", dict(position, opened_at=index * 900), brain="ai")
             trade = self.journal.close_trade(trade_id, 1995.0, (index + 1) * 900, -5.0, "sl")
         return trade
 

@@ -11,11 +11,16 @@ the stop is taken, because the candle does not say which came first.
 import risk
 
 
-def open_position(side, bid, spread_points, point, digits, config, opened_at, reason=""):
-    """Virtual position opened right after a candle closed, at the current bid/ask."""
+def open_position(side, bid, spread_points, point, digits, config, opened_at, reason="", atr_value=None):
+    """Virtual position opened right after a candle closed, at the current bid/ask.
+
+    Stops come from risk.stop_distances: ATR multiples when configured, never closer
+    than two spreads.
+    """
     ask = round(bid + spread_points * point, digits)
     entry = ask if side == "buy" else bid
-    stop_loss, take_profit = risk.stop_levels(side, entry, point, digits, config)
+    stop_points, target_points = risk.stop_distances(config, point, atr_value, floor_points=2 * spread_points)
+    stop_loss, take_profit = risk.stop_levels(side, entry, point, digits, stop_points, target_points)
     return {
         "side": side,
         "lot": config["LOT"],

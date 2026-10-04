@@ -2,7 +2,8 @@ import unittest
 
 import fills
 
-CONFIG = {"LOT": 0.01, "SL_POINTS": 500, "TP_POINTS": 1000}
+CONFIG = {"LOT": 0.01, "SL_POINTS": 500, "TP_POINTS": 1000, "SL_ATR": 0.0, "TP_ATR": 0.0}
+ATR_CONFIG = dict(CONFIG, SL_ATR=1.5, TP_ATR=3.0)
 POINT, DIGITS = 0.01, 2
 
 
@@ -13,6 +14,14 @@ class OpenPositionTest(unittest.TestCase):
         sell = fills.open_position("sell", 2000.00, 30, POINT, DIGITS, CONFIG, opened_at=1)
         self.assertEqual((sell["entry"], sell["sl"], sell["tp"]), (2000.00, 2005.00, 1990.00))
         self.assertEqual((buy["lot"], buy["opened_at"], buy["reason"]), (0.01, 1, "up"))
+
+    def test_atr_stops_scale_with_volatility_but_never_sit_inside_the_spread(self):
+        buy = fills.open_position("buy", 2000.00, 30, POINT, DIGITS, ATR_CONFIG, opened_at=1, atr_value=4.0)
+        self.assertEqual((buy["sl"], buy["tp"]), (1994.30, 2012.30))  # 1.5 x 4.00 = 6.00 stop, 3 x 4.00 target
+        quiet = fills.open_position("sell", 2000.00, 30, POINT, DIGITS, ATR_CONFIG, opened_at=1, atr_value=0.1)
+        self.assertEqual((quiet["sl"], quiet["tp"]), (2000.60, 1999.70))  # stop floored at two spreads (60 points)
+        no_atr = fills.open_position("buy", 2000.00, 30, POINT, DIGITS, ATR_CONFIG, opened_at=1, atr_value=None)
+        self.assertEqual((no_atr["sl"], no_atr["tp"]), (1995.30, 2010.30))  # falls back to fixed points
 
 
 class ExitTest(unittest.TestCase):

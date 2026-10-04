@@ -1,8 +1,9 @@
 """MT5 auto-trading bot controlled from Telegram.
 
 Run with the MT5 terminal open and logged in:  python bot.py
-Settings live in .env (copy .env.example). The rules brain is strategy.py, the AI brain
-ai_strategy.py, and every decision and trade goes into journal.db (journal.py).
+Settings live in .env (copy .env.example). The rules live in strategies.py, the AI brain in
+ai_strategy.py, brain.py picks between them (BRAIN=rules | ai | hybrid), and every decision
+and trade goes into journal.db (journal.py).
 
 Modes: dry trades on paper (virtual positions filled from the live candles, nothing is sent
 to the broker), demo and live send real orders. All three write the same journal, so the
@@ -17,12 +18,13 @@ from datetime import datetime, timedelta
 import MetaTrader5 as mt5
 
 import ai_strategy
+import brain
 import fills
-import strategy
+import indicators
 from config import ENV_PATH, JOURNAL_PATH, candle_seconds
 from config import load_config as load_settings
 from journal import Journal, summarize
-from risk import account_error, block_reason, day_start, stop_levels
+from risk import account_error, block_reason, day_start, stop_distances, stop_levels
 
 POLL_SECONDS = 5
 STALE_CANDLES = 2  # a candle that closed this many candle lengths ago is old news (market was shut)
@@ -36,11 +38,17 @@ def load_config(env_path=ENV_PATH):
     return config
 
 
-def build_order(side, tick, symbol_info, config):
-    """Market order request for mt5.order_send, always with stop loss and take profit."""
+def build_order(side, tick, symbol_info, config, atr_value=None, spread_points=0):
+    """Market order request for mt5.order_send, always with stop loss and take profit.
+
+    Stops are ATR multiples when configured, never closer than the broker's minimum stop
+    distance or two spreads.
+    """
     is_buy = side == "buy"
     price = tick.ask if is_buy else tick.bid
-    stop_loss, take_profit = stop_levels(side, price, symbol_info.point, symbol_info.digits, config)
+    floor = max(int(getattr(symbol_info, "trade_stops_level", 0) or 0), 2 * spread_points)
+    stop_points, target_points = stop_distances(config, symbol_info.point, atr_value, floor)
+    stop_loss, take_profit = stop_levels(side, price, symbol_info.point, symbol_info.digits, stop_points, target_points)
     return {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": config["SYMBOL"],
@@ -168,13 +176,13 @@ def status_text(config, state):
     return text
 
 
-def place_order(side, tick, symbol_info, config, reason=""):
+def place_order(side, tick, symbol_info, config, reason="", atr_value=None, spread_points=0):
     """Send (or, in dry mode, only announce) a market order.
 
     Returns the request dict when the position exists, with position_id set for real
     orders, or None when the order was rejected.
     """
-    request = build_order(side, tick, symbol_info, config)
+    request = build_order(side, tick, symbol_info, config, atr_value, spread_points)
     summary = (
         f"{side} {request['volume']} {request['symbol']} @ {request['price']} "
         f"sl {request['sl']} tp {request['tp']}"
@@ -225,7 +233,7 @@ def finish_trade(config, state, trade_id, price, closed_at, profit, outcome):
     journal = state["journal"]
     trade = journal.close_trade(trade_id, price, closed_at, profit, outcome)
     text = f"closed {trade['side']} {trade['lot']} {trade['symbol']} @ {price} by {outcome}, profit {profit:+.2f}"
-    if config["BRAIN"] == "ai":
+    if brain.learns(config):
         spent = journal.spend(source="bot", since=day_start(closed_at))
         lesson, playbook = ai_strategy.review(
             journal, trade, price_path(config, trade), config, "bot", state["run"], spent
@@ -268,18 +276,28 @@ def settle_mt5(config, state):
 
 # --- the loop -----------------------------------------------------------------
 
+def to_candles(rates):
+    """MT5 rate rows as plain dicts, the shape every brain and indicator works on."""
+    return [
+        {
+            "time": int(row["time"]), "open": float(row["open"]), "high": float(row["high"]),
+            "low": float(row["low"]), "close": float(row["close"]), "spread": int(row["spread"]),
+        }
+        for row in rates
+    ]
+
+
 def check_market(config, state):
     """Ask the brain once per newly closed candle."""
-    brain = ai_strategy if config["BRAIN"] == "ai" else strategy
     journal = state.get("journal")
     paper = journal is not None and config["MODE"] == "dry"
     timeframe = getattr(mt5, "TIMEFRAME_" + config["TIMEFRAME"])
-    rates = mt5.copy_rates_from_pos(config["SYMBOL"], timeframe, 0, brain.CANDLES_NEEDED + 1)
+    rates = mt5.copy_rates_from_pos(config["SYMBOL"], timeframe, 0, brain.candles_needed(config) + 1)
     if rates is None or len(rates) < 2:
         return
-    closed_candles = rates[:-1]  # the last row is still forming
+    closed_candles = to_candles(rates[:-1])  # the last row is still forming
     candle = closed_candles[-1]
-    candle_time = int(candle["time"])
+    candle_time = candle["time"]
     if candle_time == state["last_candle_time"]:
         return
     first_look = state["last_candle_time"] is None
@@ -303,19 +321,19 @@ def check_market(config, state):
     blocked = block_reason(state["paused"], open_count, pnl, spread_points, config, spent)
     if blocked:
         return remember(state, "skipped: " + blocked)  # checked first: a blocked candle costs no AI call
-    closes = [float(candle["close"]) for candle in closed_candles]
-    if brain is ai_strategy:
-        signal, reason, cost = ai_strategy.decide(closes, config, journal.experience_text() if journal else "")
-    else:
-        (signal, reason), cost = strategy.decide(closes, config), 0.0
+    experience = journal.experience_text() if journal and brain.learns(config) else ""
+    signal, reason, cost = brain.decide(closed_candles, config, experience)
     if journal:
         journal.record_decision("bot", state["run"], "decide", candle_time, signal or "hold", reason, cost)
     remember(state, f"{signal or 'hold'}: {reason}")
     if not signal:
         return
+    atr_values = indicators.atr(closed_candles, config["ATR_PERIOD"])
     # the AI call can take a while, so price the order from a fresh tick
     fresh_tick = mt5.symbol_info_tick(config["SYMBOL"]) or tick
-    opened = place_order(signal, fresh_tick, symbol_info, config, reason)
+    opened = place_order(
+        signal, fresh_tick, symbol_info, config, reason, atr_values[-1] if atr_values else None, spread_points
+    )
     if opened and journal:
         position = {
             "side": signal, "lot": opened["volume"], "entry": opened["price"], "sl": opened["sl"],
@@ -323,7 +341,8 @@ def check_market(config, state):
         }
         journal.open_trade(
             "paper" if paper else "mt5", state["run"], config["SYMBOL"], position,
-            position_id=opened.get("position_id"), snapshot=ai_strategy.snapshot(closes, config),
+            position_id=opened.get("position_id"), snapshot=ai_strategy.snapshot(closed_candles, config),
+            brain=config["BRAIN"],
         )
 
 

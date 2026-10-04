@@ -5,8 +5,8 @@ import journal
 POSITION = {"side": "buy", "lot": 0.01, "entry": 2000.3, "sl": 1995.3, "tp": 2010.3, "opened_at": 1000, "reason": "trend"}
 
 
-def closed(journal_, side, profit, outcome, closed_at, lesson=None):
-    trade_id = journal_.open_trade("replay", "r1", "XAUUSD", dict(POSITION, side=side, opened_at=closed_at - 900))
+def closed(journal_, side, profit, outcome, closed_at, lesson=None, brain="ai"):
+    trade_id = journal_.open_trade("replay", "r1", "XAUUSD", dict(POSITION, side=side, opened_at=closed_at - 900), brain=brain)
     journal_.close_trade(trade_id, exit=2005.0, closed_at=closed_at, profit=profit, outcome=outcome)
     if lesson:
         journal_.add_lesson(trade_id, lesson)
@@ -51,6 +51,15 @@ class TradeTest(unittest.TestCase):
         self.journal.save_playbook("1. do not short uptrends", trades_seen=2)
         self.journal.save_playbook("1. updated", trades_seen=12)
         self.assertEqual(self.journal.playbook()["text"], "1. updated")
+
+    def test_experience_counts_only_trades_the_ai_decided(self):
+        closed(self.journal, "buy", -5.0, "sl", closed_at=100, brain="rules")
+        self.assertIn("no closed trades yet", self.journal.experience_text())
+        self.assertEqual(self.journal.learned_trades(), [])
+        closed(self.journal, "buy", 10.0, "tp", closed_at=200, brain="hybrid")
+        self.assertEqual(len(self.journal.learned_trades()), 1)
+        self.assertIn("1 closed trades, 1 wins / 0 losses", self.journal.experience_text())
+        self.assertEqual(len(self.journal.closed_trades()), 2)  # the report still sees everything
 
     def test_experience_text(self):
         self.assertIn("no closed trades yet", self.journal.experience_text())

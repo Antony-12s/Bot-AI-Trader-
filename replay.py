@@ -1,12 +1,14 @@
 """Replay: run a brain over historical candles and trade them on paper, fast.
 
-    python replay.py history.csv              # history.csv from export_history.py
-    python replay.py history.csv --budget 2   # stop once the AI has spent 2 USD in this run
-    python replay.py history.csv --brain rules
+    python replay.py history.csv                  # history.csv from export_history.py
+    python replay.py history.csv --compare        # every rule strategy side by side, free
+    python replay.py history.csv --brain hybrid --budget 2
+    python replay.py history.csv --brain rules --strategy bollinger_breakout
 
 Settings come from .env like the live bot (lot, stops, loss limit, brain, API key). Fills
 follow fills.py, the same rules dry mode uses, and everything goes into the same journal:
-what the AI brain learns here it keeps when the bot runs for real.
+what the AI brain learns here it keeps when the bot runs for real. --compare uses throwaway
+journals so the AI's record is not polluted by rule-only trades.
 
 CSV columns: time (YYYY-MM-DD HH:MM:SS, broker server time), open, high, low, close and
 spread (points; optional, --spread fills the gap). Prices use the symbol's full number of
@@ -20,12 +22,14 @@ import csv
 from datetime import datetime, timezone
 
 import ai_strategy
+import brain
 import fills
-import strategy
+import indicators
 from config import JOURNAL_PATH, candle_seconds, load_config
-from journal import Journal
+from journal import Journal, summarize
 from report import format_report, stamp
 from risk import block_reason, day_start
+from strategies import STRATEGIES
 
 MAX_AI_FAILURES = 3  # consecutive failed AI calls before the replay gives up
 
@@ -56,13 +60,12 @@ def read_candles(path, default_spread=30):
 
 def replay(candles, config, journal, run, digits, log=print):
     """Trade the candles on paper. Returns why it stopped: "end", "budget" or "ai failures"."""
-    brain = ai_strategy if config["BRAIN"] == "ai" else strategy
+    needed = brain.candles_needed(config)
     point = 10 ** -digits
-    seconds = candle_seconds(config)
     position = None
     failures = 0
     stopped = "end"
-    for index in range(brain.CANDLES_NEEDED - 1, len(candles) - 1):
+    for index in range(needed - 1, len(candles) - 1):
         candle = candles[index]  # has just closed; a new trade fills at candles[index + 1]'s open
         if position:
             hit = fills.exit_price(position, candle["high"], candle["low"], candle["spread"], point)
@@ -77,12 +80,11 @@ def replay(candles, config, journal, run, digits, log=print):
             break
         if blocked:
             continue
-        closes = [c["close"] for c in candles[index + 1 - brain.CANDLES_NEEDED:index + 1]]
-        if brain is ai_strategy:
-            signal, reason, cost = ai_strategy.decide(closes, config, journal.experience_text())
-            failures = 0 if reason.startswith("AI: ") else failures + 1
-        else:
-            (signal, reason), cost = strategy.decide(closes, config), 0.0
+        window = candles[index + 1 - needed:index + 1]
+        experience = journal.experience_text() if brain.learns(config) else ""
+        signal, reason, cost = brain.decide(window, config, experience)
+        if brain.learns(config):
+            failures = failures + 1 if reason.startswith("AI error") else 0
         journal.record_decision("replay", run, "decide", candle["time"], signal or "hold", reason, cost)
         if failures >= MAX_AI_FAILURES:
             log(f"{stamp(candle['time'])} stopped: {failures} AI calls in a row failed, last: {reason}")
@@ -91,12 +93,15 @@ def replay(candles, config, journal, run, digits, log=print):
         if not signal:
             continue
         opening = candles[index + 1]
+        atr_values = indicators.atr(window, config["ATR_PERIOD"])
         position = fills.open_position(
-            signal, opening["open"], opening["spread"], point, digits, config, opened_at=opening["time"], reason=reason
+            signal, opening["open"], opening["spread"], point, digits, config,
+            opened_at=opening["time"], reason=reason, atr_value=atr_values[-1] if atr_values else None,
         )
         position["index"] = index + 1
         position["trade_id"] = journal.open_trade(
-            "replay", run, config["SYMBOL"], position, snapshot=ai_strategy.snapshot(closes, config)
+            "replay", run, config["SYMBOL"], position, snapshot=ai_strategy.snapshot(window, config),
+            brain=config["BRAIN"],
         )
         log(f"{stamp(opening['time'])} {signal} @ {position['entry']} sl {position['sl']} tp {position['tp']} [{reason}]")
     if position:  # history ran out: book it at the last close so nothing dangles in the journal
@@ -111,7 +116,7 @@ def settle(journal, run, config, position, candles, index, price, outcome, log):
     profit = fills.profit(position, price, config["CONTRACT_SIZE"])
     trade = journal.close_trade(position["trade_id"], price, closed_at, profit, outcome)
     log(f"{stamp(closed_at)} closed {trade['side']} @ {price} by {outcome}, profit {profit:+.2f}")
-    if config["BRAIN"] == "ai":
+    if brain.learns(config):
         path = [c["close"] for c in candles[position["index"]:index + 1]]
         lesson, playbook = ai_strategy.review(journal, trade, path, config, "replay", run, journal.spend(run=run))
         if lesson:
@@ -121,10 +126,43 @@ def settle(journal, run, config, position, candles, index, price, outcome, log):
     return None
 
 
+def compare(candles, config, digits):
+    """Run every rule strategy, and all of them together, on throwaway journals. [(name, totals)]."""
+    rows = []
+    for name in list(STRATEGIES) + ["all"]:
+        journal = Journal()
+        run = f"compare-{name}"
+        replay(candles, dict(config, BRAIN="rules", STRATEGY=name), journal, run, digits, log=lambda line: None)
+        rows.append((name, summarize(journal.closed_trades(run=run))))
+        journal.close()
+    return rows
+
+
+def format_comparison(rows, config):
+    stops = (
+        f"stops: {config['SL_ATR']} / {config['TP_ATR']} ATR({config['ATR_PERIOD']})"
+        if config["SL_ATR"] > 0 and config["TP_ATR"] > 0
+        else f"stops: {config['SL_POINTS']} / {config['TP_POINTS']} points"
+    )
+    header = f"{'strategy':20} {'trades':>6} {'win%':>5} {'net':>10} {'PF':>6} {'maxDD':>8} {'streak':>6}  outcomes"
+    lines = [f"Rule strategies on the same candles, {stops}", header, "-" * len(header)]
+    for name, totals in sorted(rows, key=lambda row: row[1]["net"], reverse=True):
+        factor = "n/a" if totals["profit_factor"] is None else f"{totals['profit_factor']:.2f}"
+        outcomes = ", ".join(f"{key} {count}" for key, count in sorted(totals["outcomes"].items())) or "-"
+        lines.append(
+            f"{name:20} {totals['trades']:>6} {totals['win_rate']:>5.0%} {totals['net']:>+10.2f} {factor:>6}"
+            f" {totals['max_drawdown']:>8.2f} {totals['longest_losing_streak']:>6}  {outcomes}"
+        )
+    lines.append("Nothing here is proof: a few dozen trades can look good by luck. Prefer many trades and a small drawdown.")
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("csv", help="candles exported by export_history.py")
-    parser.add_argument("--brain", choices=("rules", "ai"), help="override BRAIN from .env")
+    parser.add_argument("--compare", action="store_true", help="run every rule strategy and print a comparison, no AI")
+    parser.add_argument("--brain", choices=("rules", "ai", "hybrid"), help="override BRAIN from .env")
+    parser.add_argument("--strategy", help="override STRATEGY from .env (a name, a comma list, or all)")
     parser.add_argument("--budget", type=float, help="USD the AI may spend in this run (default AI_BUDGET_USD from .env)")
     parser.add_argument("--spread", type=int, default=30, help="spread in points when the CSV has none (default 30)")
     parser.add_argument("--digits", type=int, help="price decimals of the symbol (default: as many as the CSV uses)")
@@ -133,19 +171,24 @@ def main():
     config = load_config()
     if args.brain:
         config["BRAIN"] = args.brain
+    if args.strategy:
+        config["STRATEGY"] = args.strategy
     if args.budget is not None:
         config["AI_BUDGET_USD"] = args.budget
     candles, digits = read_candles(args.csv, args.spread)
     digits = args.digits if args.digits is not None else digits
-    needed = (ai_strategy if config["BRAIN"] == "ai" else strategy).CANDLES_NEEDED
+    needed = brain.candles_needed(config)
     if len(candles) <= needed:
         raise SystemExit(f"need more than {needed} candles, the file has {len(candles)}")
-    run = f"replay-{datetime.now():%Y%m%d-%H%M%S}"
     print(
-        f"{run}: {len(candles)} candles of {config['SYMBOL']} {config['TIMEFRAME']} from {stamp(candles[0]['time'])}"
-        f" to {stamp(candles[-1]['time'])}, {digits} decimals, brain={config['BRAIN']},"
-        f" budget ${config['AI_BUDGET_USD']:.2f}"
+        f"{len(candles)} candles of {config['SYMBOL']} {config['TIMEFRAME']} from {stamp(candles[0]['time'])}"
+        f" to {stamp(candles[-1]['time'])}, {digits} decimals"
     )
+    if args.compare:
+        print(format_comparison(compare(candles, config, digits), config))
+        return
+    run = f"replay-{datetime.now():%Y%m%d-%H%M%S}"
+    print(f"{run}: brain={config['BRAIN']} strategy={config['STRATEGY']} budget ${config['AI_BUDGET_USD']:.2f}")
     journal = Journal(args.journal)
     try:
         stopped = replay(candles, config, journal, run, digits)

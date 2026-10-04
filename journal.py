@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS trades (
     closed_at INTEGER,
     profit REAL,
     outcome TEXT,                 -- sl | tp | closed (by hand or by the broker)
-    lesson TEXT
+    lesson TEXT,
+    brain TEXT                    -- rules | ai | hybrid: who decided
 );
 CREATE TABLE IF NOT EXISTS playbook (
     id INTEGER PRIMARY KEY,
@@ -48,11 +49,18 @@ CREATE TABLE IF NOT EXISTS playbook (
 """
 
 
+LEARNING_BRAINS = ("ai", "hybrid")  # trades the AI decided: the only ones that shape its experience
+
+
 class Journal:
     def __init__(self, path=":memory:"):
         self.connection = sqlite3.connect(str(path))
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
+        columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(trades)")}
+        if "brain" not in columns:  # journals written before the column existed
+            with self.connection:
+                self.connection.execute("ALTER TABLE trades ADD COLUMN brain TEXT")
 
     def close(self):
         self.connection.close()
@@ -91,16 +99,16 @@ class Journal:
 
     # --- trades ----------------------------------------------------------------
 
-    def open_trade(self, source, run, symbol, position, position_id=None, snapshot=None):
+    def open_trade(self, source, run, symbol, position, position_id=None, snapshot=None, brain=None):
         """Store a freshly opened position (a dict from fills.open_position). Returns its id."""
         with self.connection:
             cursor = self.connection.execute(
                 "INSERT INTO trades (source, run, position_id, symbol, side, lot, entry, sl, tp,"
-                " opened_at, reason, snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " opened_at, reason, snapshot, brain) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     source, run, position_id, symbol, position["side"], position["lot"],
                     position["entry"], position["sl"], position["tp"], int(position["opened_at"]),
-                    position.get("reason"), snapshot,
+                    position.get("reason"), snapshot, brain,
                 ),
             )
         return cursor.lastrowid
@@ -122,6 +130,14 @@ class Journal:
         if run is not None:
             sql, params = sql + " AND run = ?", params + [run]
         return self._rows(sql + " ORDER BY closed_at, id", params)
+
+    def learned_trades(self):
+        """Closed trades the AI decided (any source): its track record."""
+        marks = ", ".join("?" * len(LEARNING_BRAINS))
+        return self._rows(
+            f"SELECT * FROM trades WHERE closed_at IS NOT NULL AND brain IN ({marks}) ORDER BY closed_at, id",
+            LEARNING_BRAINS,
+        )
 
     def close_trade(self, trade_id, exit, closed_at, profit, outcome):
         with self.connection:
@@ -166,8 +182,8 @@ class Journal:
     # --- what the brain gets to read -------------------------------------------
 
     def experience_text(self, lessons=5):
-        """The brain's own track record, formatted for its prompt."""
-        trades = self.closed_trades()
+        """The AI brain's own track record (trades it decided), formatted for its prompt."""
+        trades = self.learned_trades()
         if not trades:
             return "Your track record: no closed trades yet. Trade cautiously and build one."
         totals = summarize(trades)
