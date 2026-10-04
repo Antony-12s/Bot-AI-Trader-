@@ -92,6 +92,13 @@ python replay.py history.csv --compare
 
 `/status` สถานะ + สถิติ, `/pause` `/resume` หยุด/เปิดเข้าไม้ใหม่, `/stop` ปิดบอทจริงๆ (watchdog ไม่รีสตาร์ท), `/playbook` กฎที่ AI เขียนให้ตัวเอง, `/lessons` บทเรียน 3 ไม้ล่าสุด
 
+## ทำงานเป็นทีม
+
+- คนที่มีสิทธิ์ write ใน repo: clone มา สร้าง branch ของตัวเอง แก้ แล้วเปิด Pull Request เข้า `main` ทุก push รัน test อัตโนมัติ (แท็บ Actions) ทั้งบน Linux และ Windows
+- รัน test ในเครื่องที่ไม่ใช่ Windows: `PYTHONPATH=tests_support python -m unittest` (โฟลเดอร์ `tests_support` มีตัวแทน MetaTrader5 ให้ import ได้)
+- `.env` (มี API key, Telegram token) และ `journal.db` เป็นของใครของมัน อยู่ใน `.gitignore` ห้าม commit เด็ดขาด
+- อยากให้ AI ของเพื่อนร่วมทีมเริ่มจากประสบการณ์เดียวกัน: ก๊อป `journal.db` ให้กันตรงๆ ได้ มันคือไฟล์เดียว
+
 ## รัน 24 ชั่วโมงบน Windows VPS ไม่ต้องมีคนเฝ้า
 
 บอทคุยกับ MT5 ผ่าน package ที่รันได้แค่บน Windows เครื่องเดียวกับ MT5 ดังนั้น "รันตลอดโดยไม่ต้องเปิดคอม" = เช่า Windows VPS (ค้นว่า forex VPS, RAM 2 GB พอ) แล้วทำตามนี้บน VPS:

@@ -96,3 +96,5 @@
   - เหตุผล: ผู้ใช้บอกว่าใช้งานยาก และค่าที่ต้องเดา (ชื่อ symbol ของ XM เป็น GOLD, filling mode) คือจุดพังบ่อยสุด
   - เช็ค API key ด้วย models.list ซึ่งฟรี ปฏิเสธก็รู้ทันที ไม่ต้องรอ replay ล้ม 3 ครั้ง
   - หา Telegram chat id เองจาก getUpdates หลังผู้ใช้ทักบอท ไม่ต้องไปอ่าน console
+- ทีม: tests_support/MetaTrader5.py เป็นตัวแทน package สำหรับรัน test นอก Windows และ GitHub Actions รัน test ทุก push ทั้ง Linux (ตัวแทน) และ Windows (package จริง)
+  - เหตุผล: มี collaborator ใน repo แล้ว ต้องมีอะไรบอกว่า push นั้นพังไหมโดยไม่ต้องรอใครรันเอง
