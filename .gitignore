@@ -8,3 +8,6 @@ stop.flag
 build/
 dist/
 TradeBot.spec
+bot.log
+bot.alive
+.env.check
