@@ -2,10 +2,13 @@
 
 Nothing here needs MetaTrader5, so the replay and the tests run on any OS.
 """
+import sys
 from pathlib import Path
 
-ENV_PATH = Path(__file__).with_name(".env")
-JOURNAL_PATH = Path(__file__).with_name("journal.db")
+# Installed build (TradeBot.exe): user files sit next to the exe, not inside its _internal folder.
+APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+ENV_PATH = APP_DIR / ".env"
+JOURNAL_PATH = APP_DIR / "journal.db"
 
 DEFAULTS = {
     "MODE": "dry",

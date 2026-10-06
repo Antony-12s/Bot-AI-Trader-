@@ -126,3 +126,10 @@
 - ยังไม่มีหลักฐานว่า Opus ตัดสินใจเทรดดีกว่า Sonnet: งานของ AI ใน hybrid คือกรอง setup ไม่ใช่ทายทิศราคา
 - คง effort medium ไว้ (Sonnet 5.5 ค่าเริ่มต้นคือ high) ยังไม่ได้วัดว่า low พอไหม
 - ถ้าผลบน paper/demo แย่ลง เปลี่ยน MODEL และ PRICES ใน ai_strategy.py กลับได้ในสองบรรทัด
+## 2026-10-06 ตัวติดตั้ง TradeBot-Setup.exe
+
+- แบบเดียวกับ AutoBotSignal แต่เล็กกว่ามาก: PyInstaller ทำ TradeBot.exe แล้ว Inno Setup ห่อเป็น setup
+  - TradeBot.exe ทำตัวแทน python.exe (launcher.py) ไฟล์ .bat เดิมใช้ต่อได้ แก้แค่ setup.bat
+  - ติดตั้งแบบต่อ user ลง AppData ไม่ต้องใช้ admin เพราะบอทเขียน .env, journal.db ข้างตัวเอง
+  - config.py ใช้โฟลเดอร์ของ exe ตอน frozen ไม่งั้นไฟล์ไปอยู่ใน _internal
+  - ไม่ใช้ Tauri/MSI เพราะยังไม่มี UI ให้ห่อ

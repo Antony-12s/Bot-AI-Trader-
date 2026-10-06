@@ -5,3 +5,6 @@ journal.db-journal
 *.csv
 stop.flag
 .venv/
+build/
+dist/
+TradeBot.spec

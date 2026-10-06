@@ -17,7 +17,6 @@ import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import MetaTrader5 as mt5
 
@@ -32,7 +31,7 @@ from risk import account_error, block_reason, day_start, stop_distances, stop_le
 
 POLL_SECONDS = 5
 STALE_CANDLES = 2  # a candle that closed this many candle lengths ago is old news (market was shut)
-STOP_FLAG = Path(__file__).with_name("stop.flag")  # /stop leaves this so run_forever.bat does not restart the bot
+STOP_FLAG = ENV_PATH.with_name("stop.flag")  # /stop leaves this so run_forever.bat does not restart the bot
 
 
 def load_config(env_path=ENV_PATH):
