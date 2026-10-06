@@ -64,11 +64,12 @@ class RiskTest(unittest.TestCase):
         self.assertIn("daily loss", bot.block_reason(False, 0, -20.0, 30, CONFIG))
         self.assertIn("spread", bot.block_reason(False, 0, 0.0, 51, CONFIG))
 
-    def test_ai_budget_blocks_only_the_ai_brain(self):
-        ai_config = dict(CONFIG, BRAIN="ai")
-        self.assertIn("AI budget", bot.block_reason(False, 0, 0.0, 30, ai_config, ai_spent_today=5.0))
-        self.assertIsNone(bot.block_reason(False, 0, 0.0, 30, ai_config, ai_spent_today=4.99))
-        self.assertIsNone(bot.block_reason(False, 0, 0.0, 30, CONFIG, ai_spent_today=99.0))
+    def test_ai_budget_blocks_every_brain_that_calls_the_ai(self):
+        for brain_name in ("ai", "hybrid"):
+            ai_config = dict(CONFIG, BRAIN=brain_name)
+            self.assertIn("AI budget", bot.block_reason(False, 0, 0.0, 30, ai_config, ai_spent_today=5.0), brain_name)
+            self.assertIsNone(bot.block_reason(False, 0, 0.0, 30, ai_config, ai_spent_today=4.99), brain_name)
+        self.assertIsNone(bot.block_reason(False, 0, 0.0, 30, CONFIG, ai_spent_today=99.0))  # rules never pay
 
     def test_demo_mode_refuses_real_account(self):
         self.assertIsNotNone(bot.account_error("demo", is_demo_account=False))

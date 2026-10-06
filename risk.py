@@ -20,7 +20,7 @@ def block_reason(paused, open_position_count, pnl_today, spread_points, config, 
         return f"daily loss limit hit ({pnl_today:.2f})"
     if spread_points > config["MAX_SPREAD_POINTS"]:
         return f"spread too wide ({spread_points} points)"
-    if config["BRAIN"] == "ai" and ai_spent_today >= config["AI_BUDGET_USD"]:
+    if config["BRAIN"] in ("ai", "hybrid") and ai_spent_today >= config["AI_BUDGET_USD"]:
         return f"AI budget for today spent (${ai_spent_today:.2f} of ${config['AI_BUDGET_USD']:.2f})"
     return None
 

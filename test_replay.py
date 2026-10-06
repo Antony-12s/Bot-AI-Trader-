@@ -86,6 +86,15 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual((trade["entry"], trade["exit"], trade["profit"], trade["brain"]), (2000.0, 2005.0, -5.0, "ai"))
         self.assertIn("1 closed trades", journal.experience_text())
 
+    def test_hybrid_brain_stops_at_the_budget_too(self):
+        candles, _ = flat_then_breakout(needed=ai_strategy.CANDLES_NEEDED)
+        journal = Journal()
+        config = dict(CONFIG, BRAIN="hybrid", AI_BUDGET_USD=2.5)
+        decision = ai_strategy.Decision(None, "AI: not this one", 1.0)
+        with mock.patch.object(strategies, "candidates", return_value=[("ma_cross", "buy", "cross")]),                 mock.patch.object(ai_strategy, "decide", return_value=decision) as decide:
+            stopped = replay.replay(candles, config, journal, "r5h", digits=2, log=lambda line: None)
+        self.assertEqual((stopped, decide.call_count), ("budget", 3))
+
     def test_hybrid_asks_only_when_a_setup_fires(self):
         candles, jump = flat_then_breakout(needed=ai_strategy.CANDLES_NEEDED)
         journal = Journal()

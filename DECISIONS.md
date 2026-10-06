@@ -109,3 +109,13 @@
   - exit ของสเปค (TP = EMA20, SL = 1 ATR) แทนด้วย SL_ATR=1.0 TP_ATR=2.0 ซึ่งใกล้เคียงเมื่อ z ≈ 2
   - ADX เพิ่มใน indicators.py แบบ Wilder ตามสเปค
   - สเปคเต็มยังอยู่ในสาย engine ของเพื่อน รอข้อมูล M1 กับปฏิทินข่าว
+
+## 2026-10-06 แก้จาก review งานทีม
+
+- งบ AI รายวัน (AI_BUDGET_USD) ใช้กับ hybrid ด้วย ไม่ใช่แค่ ai
+  - เหตุผล: hybrid ก็เรียก Claude เดิมเช็คงบเฉพาะ BRAIN=ai ทำให้ replay แบบ hybrid ใน train.bat ไม่หยุดที่งบตามที่บอกไว้
+  - แก้ที่ risk.block_reason จุดเดียว เพราะทั้ง bot.py และ replay.py เช็คผ่านฟังก์ชันนี้
+- เพิ่ม tzdata ใน requirements.txt: Windows ไม่มีฐานข้อมูล time zone ทำให้ mr_intraday.py import ไม่ได้
+- เพิ่ม tests/__init__.py ให้ unittest หาเทสต์ใน tests/ เจอ
+  - เดิมบันทึกไว้ว่า "test ทั้งสองชุดผ่านพร้อมกัน" แต่ tests/test_mr.py ไม่เคยถูกรันทั้งในเครื่องและใน CI
+- settings.bat เลิกใช้บล็อกวงเล็บรอบคำถาม y/N เพราะ ")" ใน "(y/N)" ปิดบล็อกก่อนเวลา ตอนไม่มี .env จึงไม่ทำอะไรเลย
