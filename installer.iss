@@ -1,4 +1,4 @@
-; Inno Setup script for TradeBot-Setup.exe. Build it with build_installer.bat, not by hand.
+﻿; Inno Setup script for TradeBot-Setup.exe. Build it with build_installer.bat, not by hand.
 ; Per-user install, no admin: the bot writes .env, journal.db and stop.flag next to itself,
 ; which Program Files would refuse.
 
@@ -27,6 +27,7 @@ Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\TradeBot\Start bot"; Filename: "{app}\start.bat"; WorkingDir: "{app}"
+Name: "{autoprograms}\TradeBot\Dashboard"; Filename: "{app}\dashboard.bat"; WorkingDir: "{app}"
 Name: "{autoprograms}\TradeBot\Settings"; Filename: "{app}\settings.bat"; WorkingDir: "{app}"
 Name: "{autoprograms}\TradeBot\Train AI"; Filename: "{app}\train.bat"; WorkingDir: "{app}"
 Name: "{autoprograms}\TradeBot\Run forever (VPS)"; Filename: "{app}\run_forever.bat"; WorkingDir: "{app}"

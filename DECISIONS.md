@@ -133,3 +133,12 @@
   - ติดตั้งแบบต่อ user ลง AppData ไม่ต้องใช้ admin เพราะบอทเขียน .env, journal.db ข้างตัวเอง
   - config.py ใช้โฟลเดอร์ของ exe ตอน frozen ไม่งั้นไฟล์ไปอยู่ใน _internal
   - ไม่ใช้ Tauri/MSI เพราะยังไม่มี UI ให้ห่อ
+
+## 2026-10-06 หน้า UI (Dashboard + Settings)
+
+- ได้แรงบันดาลใจจาก AutoBotSignal (dark + ส้ม, การ์ดตัวเลข, equity curve, ฟีด decisions)
+  - ui.py ใช้ http.server ของ stdlib + ui.html ไฟล์เดียว กราฟวาด SVG เอง ไม่เพิ่ม library
+  - ฟังแค่ 127.0.0.1 และเช็ก Host/Origin ทุก request กันเว็บอื่นแอบแก้ .env (เช่นสลับ MODE=live)
+  - API key กับ Telegram token ไม่ส่งกลับไปหน้าเว็บ เว้นว่างแปลว่าใช้ค่าเดิม
+  - Settings ตรวจด้วย load_config ตัวเดียวกับที่บอทใช้ตอนเริ่ม
+  - ยังไม่ทำปุ่ม start/stop บอทจากหน้าเว็บ รอบหน้าค่อยว่ากัน

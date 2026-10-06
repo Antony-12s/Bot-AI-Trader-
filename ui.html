@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeBot</title>
+<style>
+:root {
+  --bg: #0b1019; --panel: #131a26; --panel2: #1a2230; --line: #232c3b;
+  --text: #e6e9ef; --muted: #8a93a6; --accent: #ff8a1f; --win: #22c55e; --loss: #ef4444;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 "Segoe UI", system-ui, sans-serif; display: flex; min-height: 100vh; }
+nav { width: 220px; background: #0e141f; border-right: 1px solid var(--line); padding: 20px 12px; display: flex; flex-direction: column; gap: 4px; }
+.brand { font-weight: 800; letter-spacing: .12em; margin: 0 8px 18px; }
+.brand b { color: var(--accent); }
+.group { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .1em; margin: 14px 10px 4px; }
+nav a { color: var(--muted); text-decoration: none; padding: 9px 12px; border-radius: 10px; border-left: 3px solid transparent; }
+nav a.on { color: var(--accent); background: var(--panel); border-left-color: var(--accent); }
+main { flex: 1; padding: 22px 28px; min-width: 0; }
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 24px; }
+.sub { color: var(--muted); font-size: 13px; }
+.badge { padding: 6px 14px; border-radius: 999px; font-weight: 700; font-size: 13px; border: 1px solid; }
+.badge.dry { color: var(--muted); border-color: var(--line); }
+.badge.demo { color: #60a5fa; border-color: #1e3a5f; background: #0f1d30; }
+.badge.live { color: var(--loss); border-color: #5f1e1e; background: #2a1010; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+.label { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.big { font-size: 34px; font-weight: 800; margin-top: 4px; }
+.win { color: var(--win); } .loss { color: var(--loss); }
+.row { display: flex; gap: 14px; flex-wrap: wrap; }
+.row > .card { flex: 1 1 340px; min-width: 0; }
+.chart-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--bg); border-radius: 10px; padding: 3px; }
+.seg button { background: none; border: 0; color: var(--muted); padding: 6px 14px; border-radius: 8px; cursor: pointer; font: inherit; }
+.seg button.on { background: var(--panel2); color: var(--accent); }
+svg { width: 100%; height: 240px; display: block; margin-top: 12px; }
+.feed { max-height: 330px; overflow: auto; display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.item { background: var(--panel2); border-radius: 10px; padding: 9px 12px; font-size: 13px; }
+.item b { margin-right: 6px; }
+.buy { color: var(--win); } .sell { color: var(--loss); } .hold { color: var(--muted); }
+.empty { color: var(--muted); padding: 30px 0; text-align: center; }
+form .card { margin-bottom: 14px; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 12px; }
+.field label { display: block; font-weight: 600; margin-bottom: 6px; }
+.field small { display: block; color: var(--muted); margin-top: 5px; font-size: 12px; }
+input, select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; }
+input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
+.save { background: var(--accent); color: #1a0d00; border: 0; border-radius: 12px; padding: 11px 22px; font: inherit; font-weight: 700; cursor: pointer; }
+.msg { margin-left: 12px; font-size: 14px; }
+@media (max-width: 720px) { body { flex-direction: column; } nav { width: auto; flex-direction: row; flex-wrap: wrap; } .group { display: none; } main { padding: 16px; } }
+</style>
+</head>
+<body>
+<nav>
+  <div class="brand">TRADE<b>BOT</b></div>
+  <div class="group">• TRADE</div>
+  <a href="#dashboard" data-page="dashboard">Dashboard</a>
+  <div class="group">• APP</div>
+  <a href="#settings" data-page="settings">Settings</a>
+</nav>
+<main>
+  <header>
+    <div><h1 id="title">Dashboard</h1><div class="sub" id="where"></div></div>
+    <span class="badge" id="mode"></span>
+  </header>
+
+  <section id="dashboard">
+    <div class="cards">
+      <div class="card"><div class="label">Today</div><div class="big" id="today"></div><div class="sub">realized, all sources</div></div>
+      <div class="card"><div class="label">Win rate</div><div class="big" id="winrate"></div><div class="sub" id="wl"></div></div>
+      <div class="card"><div class="label">Open now</div><div class="big" id="open"></div><div class="sub">paper and MT5 positions</div></div>
+      <div class="card"><div class="label">AI spend</div><div class="big" id="spend"></div><div class="sub">total on record</div></div>
+    </div>
+    <div class="row">
+      <div class="card">
+        <div class="chart-head">
+          <div><b>Equity curve</b> <span class="sub" id="stats"></span></div>
+          <div class="seg" id="range"><button data-days="1">24H</button><button data-days="7">7D</button><button data-days="30" class="on">30D</button><button data-days="3650">All</button></div>
+        </div>
+        <svg id="chart" viewBox="0 0 600 240" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="card" style="flex: 0 1 360px"><b>Recent decisions</b><div class="feed" id="feed"></div></div>
+    </div>
+  </section>
+
+  <section id="settings" hidden>
+    <form id="form"></form>
+  </section>
+</main>
+<script>
+const FIELDS = [
+  ["Trading", [
+    ["MODE", "select", ["dry", "demo", "live"], "dry = paper only. demo sends orders on a demo account. live = real money."],
+    ["BRAIN", "select", ["rules", "ai", "hybrid"], "rules is free. ai and hybrid call Claude and cost money."],
+    ["STRATEGY", "text", null, "ma_cross, trend_pullback, bollinger_breakout, rsi_reversion, mr_zscore, a list, or all"],
+    ["SYMBOL", "text", null, "Exactly as your broker names it (XAUUSD, XAUUSDm, GOLD ...)"],
+    ["TIMEFRAME", "select", ["M1", "M5", "M15", "M30", "H1", "H4", "D1"], "Candle size the bot decides on"],
+    ["LOT", "number", null, "Size of every order"],
+  ]],
+  ["Risk & safety", [
+    ["MAX_DAILY_LOSS", "number", null, "Stop opening trades once today's realized loss reaches this"],
+    ["SL_ATR", "number", null, "Stop loss in ATRs. 0 = use SL_POINTS"],
+    ["TP_ATR", "number", null, "Take profit in ATRs. 0 = use TP_POINTS"],
+    ["ATR_PERIOD", "number", null, "Candles in the ATR"],
+    ["SL_POINTS", "number", null, "Fixed stop in points"],
+    ["TP_POINTS", "number", null, "Fixed target in points"],
+    ["MAX_SPREAD_POINTS", "number", null, "Skip entries when the spread is wider"],
+    ["AI_BUDGET_USD", "number", null, "Daily Claude spend cap; the bot holds once reached"],
+  ]],
+  ["Broker", [
+    ["CONTRACT_SIZE", "number", null, "Units per lot: 100 for gold, 100000 for most forex"],
+    ["FILLING", "select", ["IOC", "FOK", "RETURN"], "Change it if orders fail with Unsupported filling mode"],
+    ["MAGIC", "number", null, "Tags this bot's orders"],
+  ]],
+  ["Keys & Telegram", [
+    ["ANTHROPIC_API_KEY", "password", null, "Leave blank to keep the stored key"],
+    ["TELEGRAM_TOKEN", "password", null, "From @BotFather. Leave blank to keep the stored one"],
+    ["TELEGRAM_CHAT_ID", "text", null, "Your chat id"],
+  ]],
+];
+const $ = (id) => document.getElementById(id);
+const money = (n) => (n < 0 ? "-$" : n > 0 ? "+$" : "$") + Math.abs(n).toFixed(2);
+const tone = (el, n) => el.className = el.className.replace(/ ?(win|loss)/g, "") + (n > 0 ? " win" : n < 0 ? " loss" : "");
+let days = 30;
+
+async function api(path, body) {
+  const response = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error);
+  return data;
+}
+
+function showMode(settings) {
+  const mode = $("mode");
+  mode.textContent = settings.MODE.toUpperCase() + (settings.MODE === "live" ? " · REAL MONEY" : "");
+  mode.className = "badge " + settings.MODE;
+  $("where").textContent = `${settings.SYMBOL} · ${settings.TIMEFRAME} · brain ${settings.BRAIN}`;
+}
+
+function drawChart(points) {
+  const svg = $("chart");
+  if (!points.length) { svg.innerHTML = `<text x="300" y="120" fill="#8a93a6" text-anchor="middle" font-size="14">No closed trades in this range</text>`; return; }
+  const values = [0, ...points.map((p) => p[1])];
+  const low = Math.min(...values), high = Math.max(...values), span = high - low || 1;
+  const x = (i) => (i / Math.max(values.length - 1, 1)) * 600;
+  const y = (v) => 225 - ((v - low) / span) * 210;
+  const line = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  svg.innerHTML = `
+    <defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8a1f" stop-opacity=".35"/><stop offset="1" stop-color="#ff8a1f" stop-opacity="0"/></linearGradient></defs>
+    <line x1="0" x2="600" y1="${y(0)}" y2="${y(0)}" stroke="#232c3b" stroke-dasharray="4 4"/>
+    <polygon points="0,240 ${line} 600,240" fill="url(#fill)"/>
+    <polyline points="${line}" fill="none" stroke="#ff8a1f" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+}
+
+async function loadDashboard() {
+  const data = await api(`/api/dashboard?days=${days}`);
+  const t = data.totals;
+  $("today").textContent = money(data.today); tone($("today"), data.today);
+  $("winrate").textContent = t.trades ? Math.round(t.win_rate * 100) + "%" : "—";
+  $("wl").innerHTML = `<span class="win">${t.wins}W</span> / <span class="loss">${t.losses}L</span>`;
+  $("open").textContent = data.open;
+  $("spend").textContent = "$" + data.ai_spend.toFixed(2);
+  $("stats").textContent = t.trades ? `net ${money(t.net)} · max drawdown $${t.max_drawdown.toFixed(2)} · ${t.trades} trades` : "";
+  drawChart(data.equity);
+  $("feed").innerHTML = data.decisions.length ? data.decisions.map((d) => `
+    <div class="item"><b class="${d.action}">${(d.action || "").toUpperCase()}</b><span class="sub">${new Date(d.at * 1000).toISOString().slice(5, 16).replace("T", " ")} · ${d.source}</span>
+    <div>${(d.reason || "").replace(/</g, "&lt;")}</div></div>`).join("") : `<div class="empty">No decisions yet</div>`;
+}
+
+function buildForm(settings) {
+  $("form").innerHTML = FIELDS.map(([group, fields]) => `
+    <div class="card"><b>${group}</b><div class="fields">${fields.map(([key, kind, options, hint]) => `
+      <div class="field"><label for="${key}">${key}</label>
+      ${kind === "select"
+        ? `<select id="${key}" name="${key}">${options.map((o) => `<option ${o === settings[key] ? "selected" : ""}>${o}</option>`).join("")}</select>`
+        : `<input id="${key}" name="${key}" type="${kind}" ${kind === "number" ? 'step="any"' : ""} autocomplete="off"
+            ${kind === "password" ? `placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"` : ""}>`}
+      <small>${hint}</small></div>`).join("")}</div></div>`).join("") +
+    `<button class="save" type="submit">Save settings</button><span class="msg" id="msg"></span>
+     <div class="sub" style="margin-top:8px">The bot reads these at start: restart it after saving.</div>`;
+  for (const [, fields] of FIELDS) for (const [key, kind] of fields) if (kind !== "select" && kind !== "password") $(key).value = settings[key];
+}
+
+$("form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const changes = Object.fromEntries(new FormData($("form")));
+  if (changes.MODE === "live" && !confirm("MODE=live sends orders on any account, real money included. Save anyway?")) return;
+  document.querySelector(".save").disabled = true;
+  try {
+    const settings = await api("/api/settings", changes);
+    buildForm(settings); showMode(settings);
+    $("msg").textContent = "Saved."; $("msg").className = "msg win";
+  } catch (error) {
+    $("msg").textContent = error.message; $("msg").className = "msg loss";
+    document.querySelector(".save").disabled = false;
+  }
+});
+
+$("range").addEventListener("click", (event) => {
+  if (!event.target.dataset.days) return;
+  days = +event.target.dataset.days;
+  for (const button of $("range").children) button.classList.toggle("on", button === event.target);
+  loadDashboard();
+});
+
+function route() {
+  const page = location.hash === "#settings" ? "settings" : "dashboard";
+  for (const id of ["dashboard", "settings"]) $(id).hidden = id !== page;
+  for (const link of document.querySelectorAll("nav a")) link.classList.toggle("on", link.dataset.page === page);
+  $("title").textContent = page === "settings" ? "Settings" : "Dashboard";
+}
+addEventListener("hashchange", route);
+
+(async () => {
+  route();
+  const settings = await api("/api/settings");
+  showMode(settings); buildForm(settings);
+  await loadDashboard();
+  setInterval(loadDashboard, 15000);
+})();
+</script>
+</body>
+</html>

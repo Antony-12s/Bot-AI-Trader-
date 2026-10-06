@@ -1,4 +1,4 @@
-"""Entry point of the installed TradeBot.exe: it stands in for python.exe in the .bat files.
+﻿"""Entry point of the installed TradeBot.exe: it stands in for python.exe in the .bat files.
 
 `TradeBot.exe bot.py --flag` runs the bundled bot module as __main__ with the same arguments,
 so start.bat, train.bat and the rest work unchanged once setup.bat points PY at the exe.
@@ -7,7 +7,7 @@ import runpy
 import sys
 from pathlib import Path
 
-SCRIPTS = ("bot", "wizard", "replay", "export_history", "report")
+SCRIPTS = ("bot", "wizard", "replay", "export_history", "report", "ui")
 
 
 def script_name(argv):

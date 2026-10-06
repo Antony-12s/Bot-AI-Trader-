@@ -12,7 +12,8 @@ rem launcher.py loads the scripts by name at run time, so list them for PyInstal
 rem MetaTrader5 imports numpy from C, which PyInstaller cannot see either.
 "%PY%" -m PyInstaller --noconfirm --clean --console --name TradeBot --hidden-import numpy ^
     --hidden-import bot --hidden-import wizard --hidden-import replay ^
-    --hidden-import export_history --hidden-import report launcher.py || goto :fail
+    --hidden-import export_history --hidden-import report --hidden-import ui ^
+    --add-data "ui.html;." launcher.py || goto :fail
 
 set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 if not exist "%ISCC%" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
