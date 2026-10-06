@@ -1,9 +1,12 @@
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
+import bot
 import ui
 from journal import Journal
 
@@ -66,6 +69,66 @@ class SettingsTest(unittest.TestCase):
         for thread in threads:
             thread.join()
         self.assertEqual(errors, [])
+
+
+class BotControlTest(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        base = Path(folder.name)
+        for name, path in (("ALIVE", base / "bot.alive"), ("STOP_FLAG", base / "stop.flag"), ("LOG_PATH", base / "bot.log"), ("APP_DIR", base)):
+            patcher = mock.patch.object(ui, name, path)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(ui, "bot_process", None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_heartbeat_tells_a_running_bot_from_a_dead_one(self):
+        self.assertFalse(ui.bot_running())
+        ui.ALIVE.touch()
+        self.assertTrue(ui.bot_running())
+        self.assertFalse(ui.bot_running(now=time.time() + ui.ALIVE_SECONDS + 1))
+
+    def test_start_launches_bot_once_and_clears_an_old_stop_request(self):
+        ui.STOP_FLAG.touch()
+        with mock.patch.object(ui.subprocess, "Popen") as popen:
+            popen.return_value.poll.return_value = None  # still running
+            ui.start_bot()
+            with self.assertRaises(ValueError):
+                ui.start_bot()
+        self.assertEqual(popen.call_count, 1)
+        self.assertEqual(popen.call_args.args[0][1:], ["bot.py"])
+        self.assertFalse(ui.STOP_FLAG.exists())
+
+    def test_start_refuses_while_a_bot_from_start_bat_is_alive(self):
+        ui.ALIVE.touch()
+        with mock.patch.object(ui.subprocess, "Popen") as popen, self.assertRaises(ValueError):
+            ui.start_bot()
+        popen.assert_not_called()
+
+    def test_stop_asks_the_bot_to_exit_through_stop_flag(self):
+        ui.stop_bot()
+        self.assertTrue(ui.STOP_FLAG.exists())
+        with mock.patch.object(bot, "STOP_FLAG", ui.STOP_FLAG):
+            self.assertTrue(bot.should_stop({}))
+        ui.STOP_FLAG.unlink()
+        with mock.patch.object(bot, "STOP_FLAG", ui.STOP_FLAG):
+            self.assertFalse(bot.should_stop({}))
+            self.assertTrue(bot.should_stop({"stopping": True}))
+
+
+class HistoryTest(unittest.TestCase):
+    def test_newest_first_with_open_trades_and_lessons(self):
+        journal = Journal()
+        position = {"side": "sell", "lot": 0.01, "entry": 1.0, "sl": 1.1, "tp": 0.8, "reason": "rsi high"}
+        first = journal.open_trade("paper", "r", "XAUUSD", dict(position, opened_at=100))
+        journal.close_trade(first, 0.8, 200, 2.0, "tp")
+        journal.add_lesson(first, "sold the top")
+        journal.open_trade("paper", "r", "XAUUSD", dict(position, opened_at=300))
+        rows = ui.history(journal)
+        self.assertEqual([row["closed_at"] for row in rows], [None, 200])
+        self.assertEqual((rows[1]["reason"], rows[1]["lesson"]), ("rsi high", "sold the top"))
 
 
 class TrustTest(unittest.TestCase):

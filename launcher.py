@@ -20,4 +20,7 @@ def script_name(argv):
 if __name__ == "__main__":
     name = script_name(sys.argv)
     sys.argv = sys.argv[1:]
+    # The frozen exe ignores PYTHONUNBUFFERED: flush every line so bot.log follows a dashboard-started bot live
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
     runpy.run_module(name, run_name="__main__")

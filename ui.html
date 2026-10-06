@@ -50,6 +50,23 @@ input, select { width: 100%; background: var(--bg); color: var(--text); border: 
 input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
 .save { background: var(--accent); color: #1a0d00; border: 0; border-radius: 12px; padding: 11px 22px; font: inherit; font-weight: 700; cursor: pointer; }
 .msg { margin-left: 12px; font-size: 14px; }
+.top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.state { font-size: 13px; font-weight: 700; color: var(--muted); }
+.state::before { content: "●"; margin-right: 6px; }
+.state.running { color: var(--win); }
+.state.stopping { color: var(--accent); }
+.go { background: var(--accent); color: #1a0d00; border: 0; border-radius: 12px; padding: 10px 22px; font: inherit; font-weight: 800; cursor: pointer; }
+.go.stop { background: none; color: var(--loss); border: 1px solid #5f1e1e; }
+.go:disabled { opacity: .5; cursor: default; }
+pre { background: var(--bg); border-radius: 10px; padding: 12px; margin: 10px 0 0; max-height: 260px; overflow: auto; font: 12px/1.5 Consolas, monospace; color: var(--muted); white-space: pre-wrap; }
+.table { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; color: var(--muted); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+td { padding: 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+tr.trade { cursor: pointer; }
+tr.trade:hover td { background: var(--panel2); }
+tr.detail td { white-space: normal; color: var(--muted); background: var(--panel2); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
 @media (max-width: 720px) { body { flex-direction: column; } nav { width: auto; flex-direction: row; flex-wrap: wrap; } .group { display: none; } main { padding: 16px; } }
 </style>
 </head>
@@ -58,13 +75,18 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: tran
   <div class="brand">TRADE<b>BOT</b></div>
   <div class="group">• TRADE</div>
   <a href="#dashboard" data-page="dashboard">Dashboard</a>
+  <a href="#history" data-page="history">History</a>
   <div class="group">• APP</div>
   <a href="#settings" data-page="settings">Settings</a>
 </nav>
 <main>
   <header>
     <div><h1 id="title">Dashboard</h1><div class="sub" id="where"></div></div>
-    <span class="badge" id="mode"></span>
+    <div class="top">
+      <span class="badge" id="mode"></span>
+      <span class="state" id="state">checking</span>
+      <button class="go" id="go" disabled>Start</button>
+    </div>
   </header>
 
   <section id="dashboard">
@@ -83,6 +105,17 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: tran
         <svg id="chart" viewBox="0 0 600 240" preserveAspectRatio="none"></svg>
       </div>
       <div class="card" style="flex: 0 1 360px"><b>Recent decisions</b><div class="feed" id="feed"></div></div>
+    </div>
+    <div class="card" style="margin-top: 14px"><b>Bot log</b> <span class="sub">output of the bot started here, newest at the bottom</span><pre id="log">Nothing yet. Press Start.</pre></div>
+  </section>
+
+  <section id="history" hidden>
+    <div class="card table">
+      <table>
+        <thead><tr><th>Closed</th><th>Side</th><th>Symbol</th><th class="num">Lot</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">Profit</th><th>Outcome</th><th>Brain</th><th>Source</th></tr></thead>
+        <tbody id="trades"></tbody>
+      </table>
+      <div class="sub" style="margin-top: 10px">Click a trade for the reason it was opened and the lesson the AI took from it. Newest 200.</div>
     </div>
   </section>
 
@@ -123,6 +156,9 @@ const FIELDS = [
 ];
 const $ = (id) => document.getElementById(id);
 const money = (n) => (n < 0 ? "-$" : n > 0 ? "+$" : "$") + Math.abs(n).toFixed(2);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const when = (t) => t ? new Date(t * 1000).toISOString().slice(5, 16).replace("T", " ") : "open";
+let mode = "dry";
 const tone = (el, n) => el.className = el.className.replace(/ ?(win|loss)/g, "") + (n > 0 ? " win" : n < 0 ? " loss" : "");
 let days = 30;
 
@@ -134,11 +170,52 @@ async function api(path, body) {
 }
 
 function showMode(settings) {
-  const mode = $("mode");
-  mode.textContent = settings.MODE.toUpperCase() + (settings.MODE === "live" ? " · REAL MONEY" : "");
-  mode.className = "badge " + settings.MODE;
+  mode = settings.MODE;
+  const badge = $("mode");
+  badge.textContent = settings.MODE.toUpperCase() + (settings.MODE === "live" ? " · REAL MONEY" : "");
+  badge.className = "badge " + settings.MODE;
   $("where").textContent = `${settings.SYMBOL} · ${settings.TIMEFRAME} · brain ${settings.BRAIN}`;
 }
+
+async function loadBot() {
+  const bot = await api("/api/bot");
+  const state = bot.stopping ? "stopping" : bot.running ? "running" : "stopped";
+  $("state").textContent = state === "running" ? "Running" : state === "stopping" ? "Stopping…" : "Stopped";
+  $("state").className = "state " + state;
+  $("go").textContent = bot.running ? "Stop" : "Start";
+  $("go").className = "go" + (bot.running ? " stop" : "");
+  $("go").disabled = bot.stopping;
+  if (bot.log.length) {
+    const log = $("log"), atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+    log.textContent = bot.log.join("\n");
+    if (atBottom) log.scrollTop = log.scrollHeight;
+  }
+}
+
+$("go").addEventListener("click", async () => {
+  const stopping = $("go").textContent === "Stop";
+  if (!stopping && mode === "live" && !confirm("MODE is live: the bot will send real-money orders. Start it?")) return;
+  $("go").disabled = true;
+  try { await api(stopping ? "/api/bot/stop" : "/api/bot/start", {}); }
+  catch (error) { alert(error.message); }
+  await loadBot();
+});
+
+async function loadHistory() {
+  const trades = await api("/api/history");
+  $("trades").innerHTML = trades.length ? trades.map((t) => `
+    <tr class="trade" data-id="${t.id}"><td>${when(t.closed_at)}</td><td class="${esc(t.side)}">${esc(t.side).toUpperCase()}</td><td>${esc(t.symbol)}</td>
+    <td class="num">${t.lot}</td><td class="num">${t.entry}</td><td class="num">${t.exit ?? "—"}</td>
+    <td class="num ${t.profit > 0 ? "win" : t.profit < 0 ? "loss" : ""}">${t.profit == null ? "—" : money(t.profit)}</td>
+    <td>${esc(t.outcome ?? "open")}</td><td>${esc(t.brain ?? "—")}</td><td>${esc(t.source)}</td></tr>
+    <tr class="detail" data-for="${t.id}" hidden><td colspan="10"><b>Why:</b> ${esc(t.reason || "—")}${t.lesson ? `<br><b>Lesson:</b> ${esc(t.lesson)}` : ""}</td></tr>`).join("")
+    : `<tr><td colspan="10" class="empty">No trades yet</td></tr>`;
+}
+
+$("trades").addEventListener("click", (event) => {
+  const row = event.target.closest("tr.trade");
+  if (row) { const detail = $("trades").querySelector(`tr[data-for="${row.dataset.id}"]`); detail.hidden = !detail.hidden; }
+});
 
 function drawChart(points) {
   const svg = $("chart");
@@ -166,8 +243,8 @@ async function loadDashboard() {
   $("stats").textContent = t.trades ? `net ${money(t.net)} · max drawdown $${t.max_drawdown.toFixed(2)} · ${t.trades} trades` : "";
   drawChart(data.equity);
   $("feed").innerHTML = data.decisions.length ? data.decisions.map((d) => `
-    <div class="item"><b class="${d.action}">${(d.action || "").toUpperCase()}</b><span class="sub">${new Date(d.at * 1000).toISOString().slice(5, 16).replace("T", " ")} · ${d.source}</span>
-    <div>${(d.reason || "").replace(/</g, "&lt;")}</div></div>`).join("") : `<div class="empty">No decisions yet</div>`;
+    <div class="item"><b class="${esc(d.action)}">${esc(d.action).toUpperCase()}</b><span class="sub">${when(d.at)} · ${esc(d.source)}</span>
+    <div>${esc(d.reason)}</div></div>`).join("") : `<div class="empty">No decisions yet</div>`;
 }
 
 function buildForm(settings) {
@@ -206,11 +283,13 @@ $("range").addEventListener("click", (event) => {
   loadDashboard();
 });
 
+const PAGES = { dashboard: "Dashboard", history: "History", settings: "Settings" };
 function route() {
-  const page = location.hash === "#settings" ? "settings" : "dashboard";
-  for (const id of ["dashboard", "settings"]) $(id).hidden = id !== page;
+  const page = location.hash.slice(1) in PAGES ? location.hash.slice(1) : "dashboard";
+  for (const id in PAGES) $(id).hidden = id !== page;
   for (const link of document.querySelectorAll("nav a")) link.classList.toggle("on", link.dataset.page === page);
-  $("title").textContent = page === "settings" ? "Settings" : "Dashboard";
+  $("title").textContent = PAGES[page];
+  if (page === "history") loadHistory();
 }
 addEventListener("hashchange", route);
 
@@ -218,8 +297,9 @@ addEventListener("hashchange", route);
   route();
   const settings = await api("/api/settings");
   showMode(settings); buildForm(settings);
-  await loadDashboard();
+  await Promise.all([loadDashboard(), loadBot()]);
   setInterval(loadDashboard, 15000);
+  setInterval(loadBot, 3000);
 })();
 </script>
 </body>

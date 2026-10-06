@@ -142,3 +142,12 @@
   - API key กับ Telegram token ไม่ส่งกลับไปหน้าเว็บ เว้นว่างแปลว่าใช้ค่าเดิม
   - Settings ตรวจด้วย load_config ตัวเดียวกับที่บอทใช้ตอนเริ่ม
   - ยังไม่ทำปุ่ม start/stop บอทจากหน้าเว็บ รอบหน้าค่อยว่ากัน
+
+## 2026-10-06 ปุ่ม Start/Stop + หน้า History
+
+- Stop ใช้ stop.flag ตัวเดิม: บอทเช็กไฟล์นี้ทุกรอบ (should_stop) แล้วปิดเองแบบเรียบร้อย
+  - ไม่ kill process: journal ปิดครบ MT5 shutdown ครบ ไม้ที่เปิดอยู่ยังมี SL/TP
+  - หยุดได้ทุกบอท ไม่ว่าเปิดจาก start.bat, run_forever หรือหน้าเว็บ และ watchdog ก็ไม่ restart
+- บอทแตะ bot.alive ทุกรอบ หน้าเว็บใช้ดูว่ามีบอทรันอยู่ กัน Start ซ้อนสองตัวบนบัญชีเดียว
+  - เกิน 120 วินาทีไม่แตะ ถือว่าตาย (ถ้า AI call นานกว่านั้นจะโชว์ผิดเป็น stopped)
+- launcher.py ตั้ง line buffering เอง เพราะ exe จาก PyInstaller ไม่สน PYTHONUNBUFFERED ทำให้ bot.log ว่าง

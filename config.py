@@ -9,6 +9,8 @@ from pathlib import Path
 APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
 ENV_PATH = APP_DIR / ".env"
 JOURNAL_PATH = APP_DIR / "journal.db"
+STOP_FLAG = APP_DIR / "stop.flag"  # /stop leaves this so run_forever.bat does not restart the bot; the dashboard creates it to ask for a stop
+ALIVE = APP_DIR / "bot.alive"  # bot.py touches it every loop so the dashboard can tell a bot is running
 
 DEFAULTS = {
     "MODE": "dry",

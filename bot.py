@@ -24,14 +24,13 @@ import ai_strategy
 import brain
 import fills
 import indicators
-from config import ENV_PATH, JOURNAL_PATH, candle_seconds
+from config import ALIVE, ENV_PATH, JOURNAL_PATH, STOP_FLAG, candle_seconds
 from config import load_config as load_settings
 from journal import Journal, summarize
 from risk import account_error, block_reason, day_start, stop_distances, stop_levels
 
 POLL_SECONDS = 5
 STALE_CANDLES = 2  # a candle that closed this many candle lengths ago is old news (market was shut)
-STOP_FLAG = ENV_PATH.with_name("stop.flag")  # /stop leaves this so run_forever.bat does not restart the bot
 
 
 def load_config(env_path=ENV_PATH):
@@ -367,6 +366,11 @@ def check_market(config, state):
         )
 
 
+def should_stop(state):
+    """/stop from Telegram, or stop.flag created by the dashboard while the bot runs."""
+    return bool(state.get("stopping")) or STOP_FLAG.exists()
+
+
 def main():
     config = load_config()
     if not mt5.initialize():
@@ -391,7 +395,8 @@ def main():
             STOP_FLAG.unlink()
         read_commands(config, state, skip_only=True)
         notify(config, "bot started: " + status_text(config, state))
-        while not state.get("stopping"):
+        while not should_stop(state):
+            ALIVE.touch()
             read_commands(config, state)
             if ensure_connected(config, state):
                 if config["MODE"] != "dry":
@@ -399,13 +404,14 @@ def main():
                 check_market(config, state)
             time.sleep(POLL_SECONDS)
         STOP_FLAG.touch()
-        notify(config, "bot stopped by /stop")
+        notify(config, "bot stopped by /stop or the dashboard")
     except KeyboardInterrupt:
         notify(config, "bot stopped")
     except Exception as error:
         notify(config, f"bot crashed: {error!r}")
         raise
     finally:
+        ALIVE.unlink(missing_ok=True)
         journal.close()
         mt5.shutdown()
 

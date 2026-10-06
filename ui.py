@@ -1,9 +1,11 @@
 """Local web dashboard: python ui.py, then the browser opens http://127.0.0.1:8765
 
-Read-only view of journal.db (today, win rate, equity curve, recent decisions) and a form
-that rewrites .env. Listens on 127.0.0.1 only; it does not start or stop the bot.
+View of journal.db (today, win rate, equity curve, decisions, trade history), a form that
+rewrites .env, and Start / Stop for bot.py. Listens on 127.0.0.1 only.
 """
 import json
+import os
+import subprocess
 import sys
 import threading
 import time
@@ -12,15 +14,68 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from config import DEFAULTS, ENV_PATH, JOURNAL_PATH, load_config
+from config import ALIVE, APP_DIR, DEFAULTS, ENV_PATH, JOURNAL_PATH, STOP_FLAG, load_config
 from journal import Journal, summarize
 from risk import SECONDS_PER_DAY, day_start
 
 PORT = 8765
 PAGE = Path(__file__).with_name("ui.html")
 TEMPLATE_PATH = ENV_PATH.with_name(".env.example")
+LOG_PATH = APP_DIR / "bot.log"
 SECRETS = ("ANTHROPIC_API_KEY", "TELEGRAM_TOKEN")  # never sent to the page, only "set" or not
+# ponytail: one loop of the bot (an AI call included) must finish within this, or it shows as stopped
+ALIVE_SECONDS = 120
 SAVE_LOCK = threading.Lock()
+BOT_LOCK = threading.Lock()
+bot_process = None  # the bot this dashboard started, if any
+
+
+def bot_running(now=None):
+    """A bot started here that has not exited, or any bot (start.bat, watchdog) touching bot.alive."""
+    now = time.time() if now is None else now
+    if bot_process is not None and bot_process.poll() is None:
+        return True
+    try:
+        return now - ALIVE.stat().st_mtime < ALIVE_SECONDS
+    except FileNotFoundError:
+        return False
+
+
+def start_bot():
+    global bot_process
+    with BOT_LOCK:  # two quick clicks must not start two bots trading the same account
+        if bot_running():
+            raise ValueError("the bot is already running")
+        STOP_FLAG.unlink(missing_ok=True)
+        with open(LOG_PATH, "w", encoding="utf-8") as log:
+            # sys.executable is python, or TradeBot.exe which runs bot.py the same way (launcher.py)
+            bot_process = subprocess.Popen(
+                [sys.executable, "bot.py"], cwd=APP_DIR, stdout=log, stderr=subprocess.STDOUT,
+                env=dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8"),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+
+
+def stop_bot():
+    """Ask any running bot to finish its loop and exit cleanly; open positions keep their SL/TP."""
+    STOP_FLAG.touch()
+
+
+def bot_status(lines=40):
+    try:
+        log = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
+    except FileNotFoundError:
+        log = []
+    return {"running": bot_running(), "stopping": STOP_FLAG.exists() and bot_running(), "log": log}
+
+
+def history(journal, limit=200):
+    """Newest trades first, open ones included, with the reason and the lesson the AI wrote."""
+    return journal._rows(
+        "SELECT id, source, symbol, side, lot, entry, exit, opened_at, closed_at, profit, outcome,"
+        " brain, reason, lesson FROM trades ORDER BY COALESCE(closed_at, opened_at) DESC, id DESC LIMIT ?",
+        (limit,),
+    )
 
 
 def dashboard(journal, days, now=None):
@@ -126,20 +181,36 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, dashboard(journal, days))
             finally:
                 journal.close()
+        if url.path == "/api/history":
+            journal = Journal(JOURNAL_PATH)
+            try:
+                return self.reply(200, history(journal))
+            finally:
+                journal.close()
         if url.path == "/api/settings":
             return self.reply(200, public_settings())
+        if url.path == "/api/bot":
+            return self.reply(200, bot_status())
         self.reply(404, {"error": "not found"})
 
     def do_POST(self):
+        # JSON content type forces a CORS preflight, which other sites cannot pass
         if not self.trusted() or self.headers.get("Content-Type") != "application/json":
             return self.reply(403, {"error": "forbidden"})
-        if urlparse(self.path).path != "/api/settings":
+        body = None
+        actions = {
+            "/api/settings": lambda: (save_settings(body), public_settings())[1],
+            "/api/bot/start": lambda: (start_bot(), bot_status())[1],
+            "/api/bot/stop": lambda: (stop_bot(), bot_status())[1],
+        }
+        action = actions.get(urlparse(self.path).path)
+        if action is None:
             return self.reply(404, {"error": "not found"})
         try:
-            save_settings(json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0)))))
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            self.reply(200, action())
         except ValueError as error:
-            return self.reply(400, {"error": str(error)})
-        self.reply(200, public_settings())
+            self.reply(400, {"error": str(error)})
 
 
 def main():
