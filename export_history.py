@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import MetaTrader5 as mt5
 
-from config import candle_seconds, load_config
+from config import candle_seconds, load_config, terminal_args
 
 
 def write_csv(rates, path, digits):
@@ -32,7 +32,7 @@ def main():
     parser.add_argument("--out", default="history.csv")
     args = parser.parse_args()
     config = load_config()
-    if not mt5.initialize():
+    if not mt5.initialize(**terminal_args()):
         raise SystemExit(f"cannot connect to MT5 (is the terminal open and logged in?): {mt5.last_error()}")
     try:
         if not mt5.symbol_select(config["SYMBOL"], True):

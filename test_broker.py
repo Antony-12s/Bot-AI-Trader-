@@ -9,7 +9,7 @@ ACCOUNT = SimpleNamespace(
     login=123456, server="XMGlobal-MT5 6", name="Test", company="XM", currency="USD",
     balance=105.5, equity=104.0, leverage=500, trade_mode=broker.mt5.ACCOUNT_TRADE_MODE_DEMO,
 )
-TERMINAL = SimpleNamespace(connected=True)
+TERMINAL = SimpleNamespace(connected=True, path=r"C:\Program Files\MetaTrader 5")
 
 
 def fake_mt5(**overrides):
@@ -90,6 +90,59 @@ class BrokerTest(unittest.TestCase):
                 break
             time.sleep(0.01)
         self.assertEqual((broker.install["state"], broker.install["error"]), ("failed", "no internet"))
+
+    def test_own_terminal_copies_the_program_and_server_list_only(self):
+        import tempfile, time
+        from pathlib import Path
+        import config
+        with tempfile.TemporaryDirectory() as folder:
+            installed, own_dir = Path(folder, "XM MT5"), Path(folder, "TradeBot", "mt5")
+            (installed / "Config").mkdir(parents=True)
+            (installed / "terminal64.exe").write_bytes(b"MZ terminal")
+            (installed / "Config" / "servers.dat").write_bytes(b"servers")
+            (installed / "MetaEditor64.exe").write_bytes(b"MZ editor")
+            mocks = self.patched()
+            with mock.patch.object(broker, "MT5_DIR", own_dir), mock.patch.object(config, "MT5_DIR", own_dir), \
+                    mock.patch.object(broker.mt5, "shutdown") as shutdown:
+                self.assertEqual(config.terminal_args(), {})  # before: the PC's default MT5
+                broker.own.update(state="idle", error="")
+                broker.setup_own_terminal(str(installed / "terminal64.exe"))
+                for _ in range(200):
+                    if broker.own["state"] != "copying":
+                        break
+                    time.sleep(0.01)
+                self.assertEqual(broker.own["state"], "done", broker.own["error"])
+                self.assertEqual(sorted(p.name for p in own_dir.iterdir()), ["Config", "terminal64.exe"])
+                self.assertEqual(config.terminal_args(), {"path": str(own_dir / "terminal64.exe"), "portable": True})
+                shutdown.assert_called_once()  # the next attach switches to the new terminal
+
+    def test_with_its_own_mt5_the_app_never_stays_on_the_owners_terminal(self):
+        import tempfile
+        from pathlib import Path
+        import bot
+        with tempfile.TemporaryDirectory() as folder:
+            own_dir = Path(folder, "mt5")
+            own_dir.mkdir()
+            (own_dir / "terminal64.exe").write_bytes(b"MZ")
+            owners = SimpleNamespace(path=r"C:\Program Files\XM Global MT5", connected=True)
+            ours = SimpleNamespace(path=str(own_dir), connected=True)
+            with mock.patch.object(broker, "MT5_DIR", own_dir), mock.patch("config.MT5_DIR", own_dir):
+                broker.last_failure["at"] = 0.0
+                mocks = self.patched(terminal_info=owners)
+                with mock.patch.object(broker.mt5, "shutdown") as shutdown:
+                    self.assertFalse(broker._attach())  # attached to the owner's MT5: leave it, refuse
+                shutdown.assert_called()
+                mocks["initialize"].assert_called_once_with(timeout=broker.ATTACH_TIMEOUT_MS, path=str(own_dir / "terminal64.exe"), portable=True)
+                self.assertIn("wrong MT5", bot.wrong_terminal(owners))
+                self.assertIsNone(bot.wrong_terminal(ours))
+                broker.last_failure["at"] = 0.0
+                mocks["terminal_info"].return_value = ours
+                self.assertTrue(broker._attach())
+
+    def test_own_terminal_needs_an_installed_mt5(self):
+        self.patched()
+        with mock.patch.object(broker, "installed_terminals", return_value=[]), self.assertRaises(ValueError):
+            broker.setup_own_terminal()
 
     def test_dashboard_refuses_to_switch_accounts_under_a_running_bot(self):
         mocks = self.patched()

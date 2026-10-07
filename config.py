@@ -9,11 +9,12 @@ from pathlib import Path
 APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
 ENV_PATH = APP_DIR / ".env"
 JOURNAL_PATH = APP_DIR / "journal.db"
+MT5_DIR = APP_DIR / "mt5"  # TradeBot's own MT5 terminal (portable), set up from the app's MetaTrader 5 page
 STOP_FLAG = APP_DIR / "stop.flag"  # /stop leaves this so run_forever.bat does not restart the bot; the dashboard creates it to ask for a stop
 ALIVE = APP_DIR / "bot.alive"  # bot.py touches it every loop so the dashboard can tell a bot is running
 
 DEFAULTS = {
-    "MODE": "dry",
+    "MODE": "demo",  # the app offers demo and live; dry (paper) stays for the console tools and replay
     "BRAIN": "rules",
     "STRATEGY": "trend_pullback",
     "AI_PROVIDER": "claude",
@@ -64,6 +65,16 @@ TIMEFRAME_SECONDS = {
     "H6": 21600, "H8": 28800, "H12": 43200, "D1": 86400, "W1": 604800, "MN1": 2592000,
 }
 FILLING_MODES = ("IOC", "FOK", "RETURN")
+
+
+def terminal_args():
+    """mt5.initialize() arguments: TradeBot's own portable terminal when it has one, else the PC's default MT5.
+
+    Every MT5 connection (bot, dashboard, tools) goes through this, so none of them can end up on the
+    terminal the owner trades by hand.
+    """
+    terminal = MT5_DIR / "terminal64.exe"
+    return {"path": str(terminal), "portable": True} if terminal.exists() else {}
 
 
 def load_config(env_path=ENV_PATH):

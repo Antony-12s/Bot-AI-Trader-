@@ -475,7 +475,7 @@ class ConfigTest(unittest.TestCase):
 
     def test_env_overrides_defaults_and_converts_numbers(self):
         config = self.load("# comment\nSYMBOL=GOLD\nLOT = 0.02\n")
-        self.assertEqual((config["SYMBOL"], config["LOT"], config["MODE"]), ("GOLD", 0.02, "dry"))
+        self.assertEqual((config["SYMBOL"], config["LOT"], config["MODE"]), ("GOLD", 0.02, "demo"))  # demo refuses real accounts
         self.assertEqual((config["AI_BUDGET_USD"], config["CONTRACT_SIZE"]), (5.0, 100.0))
 
     def test_bad_settings_stop_the_bot(self):

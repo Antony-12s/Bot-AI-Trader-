@@ -277,7 +277,9 @@ def save_settings(changes, path=ENV_PATH):
             if key in SECRETS and value in ("", "set"):
                 continue  # blank or untouched secret field keeps the stored one
             values[key] = value
-        template = path.read_text(encoding="utf-8") if path.exists() else TEMPLATE_PATH.read_text(encoding="utf-8")
+        # the template next to the app, else the copy bundled inside it (a folder run without the installer)
+        source = path if path.exists() else TEMPLATE_PATH if TEMPLATE_PATH.exists() else Path(__file__).with_name(".env.example")
+        template = source.read_text(encoding="utf-8")
         text = render_env(template, values)
         missing = [key for key in values if not any(line.startswith(key + "=") for line in text.splitlines())]
         text += "".join(f"{key}={values[key]}\n" for key in missing)
@@ -392,6 +394,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/ai/test": lambda: test_ai_key(body),  # the key is only sent to its own AI company
             "/api/app/show": lambda: (show_window and show_window(), {"shown": bool(show_window)})[1],
             "/api/broker/install": lambda: (__import__("broker").start_install(), {"started": True})[1],
+            "/api/broker/own": lambda: (__import__("broker").setup_own_terminal(), {"started": True})[1],
+            "/api/broker/show": lambda: {"windows": __import__("broker").show_terminal(bool(body.get("show")))},
         }
         action = actions.get(urlparse(self.path).path)
         if action is None:
@@ -465,11 +469,17 @@ def watch_bot(now):
 
 
 def run_watchdog():
+    last_problem = None
     while True:
-        try:
-            watch_bot(time.time())
-        except Exception as error:  # the watchdog must outlive any surprise
-            print("watchdog:", error)
+        for step in (lambda: watch_bot(time.time()),
+                     lambda: __import__("broker").keep_hidden()):  # TradeBot's own MT5 stays hidden unless Show MT5
+            try:
+                step()
+            except Exception as error:  # the watchdog must outlive any surprise; the windowed app has no console
+                problem = f"watchdog: {type(error).__name__}: {error}"
+                if problem != last_problem:
+                    log_line(problem)
+                    last_problem = problem
         time.sleep(2)
 
 

@@ -24,7 +24,6 @@ header { display: flex; justify-content: space-between; align-items: center; mar
 h1 { margin: 0; font-size: 24px; }
 .sub { color: var(--muted); font-size: 13px; }
 .modes button { font-weight: 700; }
-.modes button.on[data-mode="dry"] { color: var(--text); }
 .modes button.on[data-mode="demo"] { color: #60a5fa; background: #0f1d30; }
 .modes button.on[data-mode="live"] { color: var(--loss); background: #2a1010; }
 .counter { margin-top: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
@@ -93,6 +92,7 @@ details { background: var(--panel2); border-radius: 12px; padding: 12px; margin-
 summary { cursor: pointer; font-weight: 600; }
 details ol { padding-left: 20px; color: var(--muted); }
 code { background: var(--bg); padding: 1px 6px; border-radius: 6px; color: var(--text); }
+.ownbox { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--panel2); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
 .balance { text-align: right; line-height: 1.1; }
 .balance b { font-size: 20px; }
 .balance span { display: block; font-size: 11px; font-weight: 800; letter-spacing: .1em; }
@@ -168,7 +168,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <header>
     <div><h1 id="title">Dashboard</h1><div class="sub" id="where"></div></div>
     <div class="top">
-      <div class="seg modes" id="modes"><button data-mode="dry">Paper</button><button data-mode="demo">Demo</button><button data-mode="live">Live</button></div>
+      <div class="seg modes" id="modes"><button data-mode="demo">Demo</button><button data-mode="live">Live</button></div>
       <div class="balance" id="balance"></div>
       <span class="state" id="state">checking</span>
       <button class="go" id="go" disabled>Start</button>
@@ -179,7 +179,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
     <div class="cards">
       <div class="card"><div class="label">Today</div><div class="big" id="today"></div><div class="sub">profit from trades closed today</div></div>
       <div class="card"><div class="label">Win rate</div><div class="big" id="winrate"></div><div class="sub" id="wl"></div></div>
-      <div class="card"><div class="label">Open now</div><div class="big" id="open"></div><div class="sub">paper and MT5 positions</div></div>
+      <div class="card"><div class="label">Open now</div><div class="big" id="open"></div><div class="sub">open trades right now</div></div>
       <div class="card"><div class="label">AI cost</div><div class="big" id="spend"></div><div class="sub">paid to the AI so far</div></div>
     </div>
     <div class="row">
@@ -272,7 +272,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
 // [section, subtitle, [[key, kind, options, hint]]]; "choice" renders as buttons, like a segmented control.
 const FIELDS = [
   ["Execution", "Mode, brain, market, size", [
-    ["MODE", "choice", ["dry", "demo", "live"], "dry = paper only. demo sends orders on a demo account. live = real money."],
+    ["MODE", "choice", ["demo", "live"], "demo trades only a demo account (it refuses a real one). live trades any account, real money included."],
     ["BRAIN", "choice", ["rules", "ai", "hybrid"], "rules is free. ai decides every candle, hybrid only judges setups; both call the AI chosen under AI &amp; Telegram."],
     ["SYMBOL", "text", null, "Exactly as your broker names it (XAUUSD, XAUUSDm, GOLD ...)"],
     ["TIMEFRAME", "choice", ["M1", "M5", "M15", "M30", "H1", "H4", "D1"], "Candle size the bot decides on"],
@@ -319,7 +319,7 @@ $("mark").src = document.querySelector("link[rel=icon]").href;  // one copy of t
 const money = (n) => (n < 0 ? "-$" : n > 0 ? "+$" : "$") + Math.abs(n).toFixed(2);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const when = (t) => t ? new Date(t * 1000).toISOString().slice(5, 16).replace("T", " ") : "open";
-let mode = "dry";
+let mode = "demo";
 const tone = (el, n) => el.className = el.className.replace(/ ?(win|loss)/g, "") + (n > 0 ? " win" : n < 0 ? " loss" : "");
 let days = 30;
 
@@ -679,7 +679,16 @@ async function loadBroker() {
   $("balance").className = "balance " + kind;
   $("balance").innerHTML = account.logged_in ? `<b>${account.balance.toFixed(2)} ${esc(account.currency)}</b><span>${account.demo ? "DEMO" : "REAL MONEY"}</span>` : "";
   $("navacct").innerHTML = kind ? `<span class="pill ${kind}">${kind.toUpperCase()}</span>` : "";
-  $("acct").innerHTML = !account.connected ? `<b>MT5 not reachable</b><div class="sub" style="margin-top: 8px">${esc(account.error)}</div>
+  const setup = account.own_setup || {};
+  const ownBlock = account.own
+    ? `<div class="ownbox"><div><b>TradeBot's own MT5</b><div class="sub">Runs hidden, apart from your own MetaTrader.</div></div>
+        <button class="ghost" data-mt5show="${account.shown ? 0 : 1}">${account.shown ? "Hide MT5" : "Show MT5"}</button></div>`
+    : setup.state === "copying" ? `<div class="ownbox"><b>Setting up TradeBot's own MT5…</b></div>`
+    : `<div class="ownbox" style="display: block"><b>Using this PC's MetaTrader 5</b>
+        <div class="sub" style="margin: 4px 0 10px">The bot shares it with your manual trading. Give TradeBot its own copy (about 120 MB, copied from the MT5 already installed) so it logs in and trades on its own, hidden.</div>
+        ${setup.state === "failed" ? `<p class="loss">${esc(setup.error)}</p>` : ""}
+        <button class="save" data-mt5own="1">Give TradeBot its own MT5</button></div>`;
+  $("acct").innerHTML = ownBlock + (!account.connected ? `<b>MT5 not reachable</b><div class="sub" style="margin-top: 8px">${esc(account.error)}</div>
       <div class="sub" style="margin-top: 8px">Install MetaTrader 5 from your broker and open it once.</div>`
     : !account.logged_in ? `<b>Terminal open, no account</b><div class="sub" style="margin-top: 8px">Log in with the form to start trading through it.</div>`
     : `<div class="agent-head"><b style="font-size: 20px">${esc(account.login)}</b><span class="pill ${kind}">${kind === "demo" ? "DEMO" : "REAL MONEY"}</span></div>
@@ -689,7 +698,7 @@ async function loadBroker() {
         <span>Balance</span><b>${account.balance.toFixed(2)} ${esc(account.currency)}</b>
         <span>Equity</span><b>${account.equity.toFixed(2)} ${esc(account.currency)}</b>
         <span>Leverage</span><b>1:${account.leverage}</b></div>
-      ${kind === "real" && mode !== "live" ? `<div class="sub" style="margin-top: 12px">Real account: the bot only trades it in Live mode. Paper mode never sends orders; Demo mode refuses a real account.</div>` : ""}`;
+      ${kind === "real" && mode !== "live" ? `<div class="sub" style="margin-top: 12px">Real account: the bot only trades it in Live mode. Demo mode refuses a real account.</div>` : ""}`);
   if (account.logged_in && !$("acctsrv").value) $("acctsrv").value = account.server;
 }
 
@@ -703,6 +712,15 @@ async function loadSymbols() {
     : `<div class="empty">${symbolNames.length ? "No match" : "No symbols: is MT5 logged in?"}</div>`;
 }
 
+$("acct").addEventListener("click", async (event) => {
+  const { mt5own, mt5show } = event.target.dataset;
+  if (!mt5own && mt5show === undefined) return;
+  try {
+    if (mt5own) await api("/api/broker/own", {});
+    else await api("/api/broker/show", { show: mt5show === "1" });
+  } catch (error) { alert(error.message); }
+  setTimeout(() => loadBroker().catch(() => {}), 800);
+});
 $("symsearch").addEventListener("input", loadSymbols);
 $("symlist").addEventListener("click", async (event) => {
   const name = event.target.dataset.sym;
@@ -730,16 +748,20 @@ async function setupState() {
   const [acct, settings, bot] = await Promise.all([api("/api/broker"), api("/api/settings"), api("/api/bot")]);
   if (acct.logged_in && !symbolNames) symbolNames = await api("/api/broker/symbols");
   const symbolOk = acct.logged_in && symbolNames.includes(settings.SYMBOL);
-  return { acct, settings, bot, symbolOk, ready: acct.logged_in && symbolOk && bot.configured };
+  return { acct, settings, bot, symbolOk, ready: acct.own && acct.logged_in && symbolOk && bot.configured };
 }
 
 async function loadSetup() {
   const { acct, settings, bot, symbolOk } = await setupState();
   const install = acct.install || {};
   const steps = [
-    ["Install MetaTrader 5", acct.connected || acct.installed, `
-      <div class="sub">TradeBot trades through MetaTrader 5, the free terminal most brokers use.</div>
-      ${install.state === "downloading" ? `<p>Downloading the official installer from MetaQuotes…</p>`
+    ["Give TradeBot its own MetaTrader 5", acct.own, `
+      <div class="sub">TradeBot trades through MetaTrader 5, the free terminal most brokers use. It keeps its own hidden copy, apart from any MT5 you trade in yourself.</div>
+      ${acct.installed ? (acct.own_setup || {}).state === "copying" ? `<p>Copying MetaTrader 5 into TradeBot (about 120 MB)…</p>`
+        : `${(acct.own_setup || {}).state === "failed" ? `<p class="loss">${esc(acct.own_setup.error)}</p>` : ""}
+          <div class="picks"><button class="save" data-act="own">Set up TradeBot's own MT5</button></div>
+          <div class="sub" style="margin-top: 8px">Copies the program from the MetaTrader 5 already on this PC. Your own accounts and passwords are not copied.</div>`
+      : install.state === "downloading" ? `<p>Downloading the official installer from MetaQuotes…</p>`
         : install.state === "launched" ? `<p>The MetaTrader 5 installer is open: click through it, let MT5 start, then press Check again.</p>
             <button class="ghost" data-act="recheck">Check again</button>`
         : `${install.state === "failed" ? `<p class="loss">Download failed: ${esc(install.error)}</p>` : ""}
@@ -755,9 +777,9 @@ async function loadSetup() {
         <button class="save" type="submit">Log in</button> <span class="msg" id="setupmsg"></span>
         <div class="sub" style="margin-top: 8px">No account yet? Open a free demo account in MetaTrader 5: File → Open an Account.</div>
       </form>`],
-    ["Choose how it trades", bot.configured, `
-      <div class="sub">Start on Paper: the bot trades on paper with live prices and sends nothing to the broker. Move to Demo, then Live, once you trust its record.</div>
-      <div class="picks">${[["dry", "Paper (start here)"], ["demo", "Demo account"], ["live", "Live, real money"]].map(([value, label]) =>
+    ["Choose how it trades", bot.configured && ["demo", "live"].includes(settings.MODE), `
+      <div class="sub">Start on Demo: the bot trades a free demo account from your broker and refuses a real one. Move to Live once you trust its record.</div>
+      <div class="picks">${[["demo", "Demo account (start here)"], ["live", "Live, real money"]].map(([value, label]) =>
         `<button class="${settings.MODE === value && bot.configured ? "save" : "ghost"}" data-mode="${value}">${label}</button>`).join("")}</div>`],
     ["Pick what to trade", symbolOk, `
       <div class="sub">Now set: <b>${esc(settings.SYMBOL)}</b>${acct.logged_in && !symbolOk ? " — your broker has no symbol with that name." : ""} Pick one your broker offers:</div>
@@ -773,13 +795,14 @@ async function loadSetup() {
       <div class="step-head"><i>${done ? "✓" : i + 1}</i><b>${title}</b></div>
       ${i === current ? `<div class="step-body">${body}</div>` : ""}</div>`).join("")
     + (current < 0 ? `<div class="step done"><div class="step-head"><i>✓</i><b>All set. Watch it on the <a href="#dashboard" style="color: var(--accent)">Dashboard</a>.</b></div></div>` : "");
-  if (install.state === "downloading") setTimeout(() => location.hash === "#setup" && loadSetup(), 2000);
+  if (install.state === "downloading" || (acct.own_setup || {}).state === "copying") setTimeout(() => location.hash === "#setup" && loadSetup(), 2000);
 }
 
 $("steps").addEventListener("click", async (event) => {
   const target = event.target;
   try {
     if (target.dataset.act === "install") await api("/api/broker/install", {});
+    else if (target.dataset.act === "own") await api("/api/broker/own", {});
     else if (target.dataset.act === "start") await api("/api/bot/start", {});
     else if (target.dataset.sym) showMode(await api("/api/settings", { SYMBOL: target.dataset.sym }));
     else if (target.dataset.mode) {

@@ -17,6 +17,7 @@ import socket
 import time
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from datetime import datetime, timedelta
 
 import MetaTrader5 as mt5
@@ -26,7 +27,7 @@ import brain
 import fills
 import indicators
 import signals
-from config import ALIVE, ENV_PATH, JOURNAL_PATH, STOP_FLAG, candle_seconds
+from config import ALIVE, ENV_PATH, JOURNAL_PATH, STOP_FLAG, candle_seconds, terminal_args
 from config import load_config as load_settings
 from journal import Journal, summarize
 from risk import account_error, block_reason, day_start, stop_distances, stop_levels
@@ -158,7 +159,7 @@ def ensure_connected(config, state):
     if not state.get("disconnected"):
         state["disconnected"] = True
         notify(config, "MT5 connection lost (terminal closed?), retrying every few seconds")
-    mt5.initialize()
+    mt5.initialize(**terminal_args())
     return False
 
 
@@ -429,6 +430,15 @@ def outside_signals(config, state):
             state["journal"].record_decision(source, state["run"], "signal", at, side or "invalid", ("skipped: " + why) if why else "traded: " + text.strip()[:80])
 
 
+def wrong_terminal(info):
+    """Why this terminal must not be traded through, or None. With its own MT5, TradeBot uses only that one,
+    never the MT5 the owner trades in by hand (the library can attach to another running terminal)."""
+    own = terminal_args().get("path")
+    if own and (info is None or Path(info.path).resolve() != Path(own).parent.resolve()):
+        return f"connected to the wrong MT5 ({info.path if info else 'none'}), expected TradeBot's own in {Path(own).parent}"
+    return None
+
+
 def should_stop(state):
     """/stop from Telegram, or stop.flag created by the dashboard while the bot runs."""
     return bool(state.get("stopping")) or STOP_FLAG.exists()
@@ -453,8 +463,12 @@ def single_instance():
 def main():
     config = load_config()
     instance = single_instance()  # noqa: F841 - held open until the process exits
-    if not mt5.initialize():
+    if not mt5.initialize(**terminal_args()):
         raise SystemExit(f"cannot connect to MT5 (is the terminal open and logged in?): {mt5.last_error()}")
+    error = wrong_terminal(mt5.terminal_info())
+    if error:
+        mt5.shutdown()
+        raise SystemExit(error)
     journal = Journal(JOURNAL_PATH)
     try:
         if not mt5.symbol_select(config["SYMBOL"], True):

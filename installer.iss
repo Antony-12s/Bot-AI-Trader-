@@ -50,6 +50,8 @@ Type: files; Name: "{app}\.env.check"
 Type: files; Name: "{app}\bot.log"
 Type: files; Name: "{app}\bot.alive"
 Type: files; Name: "{app}\stop.flag"
+; TradeBot's own portable MT5: its saved broker logins must not outlive the app.
+Type: filesandordirs; Name: "{app}\mt5"
 
 [UninstallRun]
 ; Drop the logon task install_autostart.bat may have created; harmless when it does not exist.
