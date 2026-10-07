@@ -329,6 +329,15 @@ def switch_mode(mode, path=ENV_PATH):
     return public_settings(path)
 
 
+def open_terminal():
+    """Bring MT5 forward. Windows only lets the program the user just clicked raise another window, so this
+    one lets any process do it for the moment, then the helper process (which talks to MT5) does it."""
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
+    return mt5_call("open_terminal")
+
+
 def broker_page():
     values = read_env()
     return dict(mt5_call("status"), accounts={mode: {"login": values[f"{mode.upper()}_LOGIN"], "server": values[f"{mode.upper()}_SERVER"]}
@@ -496,6 +505,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/broker/install": lambda: (mt5_call("start_install"), {"started": True})[1],
             "/api/broker/mode": lambda: switch_mode(body.get("mode")),
             "/api/broker/own": lambda: (mt5_call("setup_own_terminal"), {"started": True})[1],
+            "/api/broker/open": lambda: {"result": open_terminal()},
             "/api/broker/show": lambda: {"windows": mt5_call("show_terminal", bool(body.get("show")))},
         }
         action = actions.get(urlparse(self.path).path)

@@ -165,6 +165,29 @@ class BrokerTest(unittest.TestCase):
         with mock.patch.object(broker, "installed_terminals", return_value=[]), self.assertRaises(ValueError):
             broker.setup_own_terminal()
 
+    def test_open_terminal_starts_mt5_when_closed_and_raises_it_when_open(self):
+        import tempfile
+        from pathlib import Path
+        folder = tempfile.mkdtemp()
+        exe = Path(folder, "terminal64.exe")
+        exe.write_bytes(b"")
+        self.patched(terminal_info=SimpleNamespace(connected=True, path=folder))
+        user32 = mock.MagicMock()
+        with mock.patch.object(broker, "own_terminal", return_value=None),                 mock.patch("ctypes.windll", SimpleNamespace(user32=user32), create=True),                 mock.patch.object(broker.subprocess, "Popen") as popen:
+            self.assertEqual(broker.terminal_in_use(), exe)  # the attached terminal
+            with mock.patch.object(broker, "_terminal_windows", return_value=[]):
+                self.assertEqual(broker.open_terminal(), "started")
+            popen.assert_called_once_with([str(exe)], cwd=folder)
+            with mock.patch.object(broker, "_terminal_windows", return_value=[7, 8]),                     mock.patch.object(broker, "_class_of", side_effect=["MetaQuotes::MetaTrader::5.00", "GDI+ Window"]):
+                self.assertEqual(broker.open_terminal(), "shown")
+            user32.ShowWindow.assert_called_once_with(7, 9)  # the helper window stays hidden
+            user32.SetForegroundWindow.assert_called_once_with(7)
+
+    def test_open_terminal_without_mt5_says_to_install_it(self):
+        self.patched(terminal_info=None)
+        with mock.patch.object(broker, "own_terminal", return_value=None),                 mock.patch.object(broker, "installed_terminals", return_value=[]),                 self.assertRaisesRegex(ValueError, "not installed"):
+            broker.open_terminal()
+
     def test_dashboard_files_each_login_under_its_real_type_and_keeps_the_mode(self):
         import tempfile
         from pathlib import Path

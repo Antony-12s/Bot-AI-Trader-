@@ -5,6 +5,7 @@ back here; the terminal keeps the account the same way as a login typed in its o
 """
 import os
 import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -108,9 +109,9 @@ def setup_own_terminal(source=None):
     threading.Thread(target=work, daemon=True).start()
 
 
-def _terminal_windows():
-    """Top-level windows of TradeBot's own terminal (matched by its exe path, never the owner's MT5)."""
-    terminal = own_terminal()
+def _terminal_windows(terminal=None):
+    """Top-level windows of one terminal, matched by its exe path: TradeBot's own unless another is named."""
+    terminal = terminal or own_terminal()
     if terminal is None or os.name != "nt":
         return []
     import ctypes
@@ -152,6 +153,45 @@ def show_terminal(show):
     return len(windows)
 
 
+def terminal_in_use():
+    """The terminal64.exe TradeBot works with: its own, else the one it is attached to, else the first installed."""
+    if own_terminal() is not None:
+        return own_terminal()
+    with LOCK:
+        info = mt5.terminal_info()
+    if info is not None and Path(info.path, "terminal64.exe").exists():
+        return Path(info.path, "terminal64.exe")
+    found = installed_terminals()
+    return Path(found[0]) if found else None
+
+
+def open_terminal():
+    """The app's "Open MetaTrader 5" button: bring the terminal's window to the front, starting it if closed."""
+    import ctypes
+    terminal = terminal_in_use()
+    if terminal is None:
+        raise ValueError("MetaTrader 5 is not installed yet: see Setup, step 1")
+    # the main window only: MT5 also owns hidden helper windows with titles ("GDI+ Window") that must stay hidden
+    windows = [hwnd for hwnd in _terminal_windows(terminal) if _class_of(hwnd).startswith(MAIN_CLASS)]
+    if not windows:
+        subprocess.Popen([str(terminal)] + (["/portable"] if terminal == own_terminal() else []), cwd=str(terminal.parent))
+        return "started"
+    if terminal == own_terminal():
+        show_wanted["value"] = True  # the user wants to see it: stop hiding TradeBot's own MT5
+    for hwnd in windows:
+        ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE: shown and un-minimised
+    ctypes.windll.user32.SetForegroundWindow(windows[0])
+    return "shown"
+
+
+def _class_of(hwnd):
+    import ctypes
+    kind = ctypes.create_unicode_buffer(64)
+    ctypes.windll.user32.GetClassNameW(hwnd, kind, 64)
+    return kind.value
+
+
+MAIN_CLASS = "MetaQuotes::MetaTrader"  # the terminal's main window class, e.g. MetaQuotes::MetaTrader::5.00
 DIALOG_CLASS = "#32770"  # every Windows dialog box ("Open an Account", "Welcome to LiveUpdate", ...)
 
 

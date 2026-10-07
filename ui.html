@@ -92,6 +92,12 @@ details { background: var(--panel2); border-radius: 12px; padding: 12px; margin-
 summary { cursor: pointer; font-weight: 600; }
 details ol { padding-left: 20px; color: var(--muted); }
 code { background: var(--bg); padding: 1px 6px; border-radius: 6px; color: var(--text); }
+.mt5btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.mt5btn::before { content: "●"; margin-right: 6px; color: var(--muted); }
+.mt5btn.linked::before { color: var(--win); }
+.mt5btn.partial::before { color: var(--accent); }
+.mt5btn.down::before { color: var(--loss); }
+.mt5btn:hover { border-color: var(--accent); }
 .slots { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
 .slot { background: var(--panel2); border: 1px solid transparent; border-radius: 12px; padding: 10px 12px; }
 .slot.on { border-color: var(--accent); }
@@ -201,6 +207,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
     <div><h1 id="title">Dashboard</h1><div class="sub" id="where"></div></div>
     <div class="top">
       <div class="seg modes" id="modes"><button data-mode="demo">Demo</button><button data-mode="live">Live</button></div>
+      <button class="mt5btn" id="mt5btn" title="Open MetaTrader 5">MT5 · checking</button>
       <div class="balance" id="balance"></div>
       <span class="state" id="state">checking</span>
       <button class="go" id="go" disabled>Start</button>
@@ -746,8 +753,24 @@ $("source").addEventListener("click", async (event) => {
 });
 
 let account = null, symbolNames = null, currentSymbol = "";
+// The header's MT5 button: says whether TradeBot is linked to MetaTrader 5, and opens it when clicked.
+function showLink(state) {
+  const [kind, text, tip] = !state ? ["down", "MT5 · not linked", "TradeBot cannot reach MetaTrader 5. Click to open it."]
+    : !state.connected ? ["down", "MT5 · not linked", state.error || "TradeBot cannot reach MetaTrader 5. Click to open it."]
+    : !state.logged_in ? ["partial", "MT5 · no account", "MetaTrader 5 is open but logged in to no account. Log in on the MetaTrader 5 page."]
+    : !state.online ? ["partial", "MT5 · offline", `Account ${state.login} is not connected to the broker's server right now. Click to look in MT5.`]
+    : ["linked", "MT5 · linked", `Linked to account ${state.login} on ${state.server}. Click to open MetaTrader 5.`];
+  $("mt5btn").className = "mt5btn " + kind; $("mt5btn").textContent = text; $("mt5btn").title = tip;
+}
+$("mt5btn").addEventListener("click", async () => {
+  $("mt5btn").textContent = "MT5 · opening…";
+  try { await api("/api/broker/open", {}); } catch (error) { alert(error.message); }
+  setTimeout(() => loadBroker().catch(() => showLink(null)), 1500);
+});
+
 async function loadBroker() {
-  account = await api("/api/broker");
+  try { account = await api("/api/broker"); } catch (error) { showLink(null); throw error; }
+  showLink(account);
   const kind = account.logged_in ? (account.demo ? "demo" : "real") : "";
   $("balance").className = "balance " + kind;
   $("balance").innerHTML = account.logged_in ? `<b>${account.balance.toFixed(2)} ${esc(account.currency)}</b><span>${account.demo ? "DEMO" : "REAL MONEY"}</span>` : "";
@@ -836,7 +859,8 @@ async function loadSetup() {
     ["Install MetaTrader 5", acct.connected || acct.own, `
       <div class="sub">TradeBot trades through MetaTrader 5, the free terminal most brokers use.</div>
       ${acct.installed ? `<p>MetaTrader 5 is installed but TradeBot cannot reach it: open it once, then press Check again.</p>
-          <button class="ghost" data-act="recheck">Check again</button>`
+          <div class="picks"><button class="save" data-act="open">Open MetaTrader 5</button>
+          <button class="ghost" data-act="recheck">Check again</button></div>`
       : install.state === "downloading" ? `<p>Downloading the official installer from MetaQuotes…</p>`
         : install.state === "launched" ? `<p>The MetaTrader 5 installer is open: click through it, let MT5 start, then press Check again.</p>
             <button class="ghost" data-act="recheck">Check again</button>`
@@ -880,6 +904,7 @@ $("steps").addEventListener("click", async (event) => {
     if (target.dataset.act === "install") await api("/api/broker/install", {});
     else if (target.dataset.act === "own") await api("/api/broker/own", {});
     else if (target.dataset.act === "start") await api("/api/bot/start", {});
+    else if (target.dataset.act === "open") await api("/api/broker/open", {});
     else if (target.dataset.sym) showMode(await api("/api/settings", { SYMBOL: target.dataset.sym }));
     else if (target.dataset.mode) {
       if (target.dataset.mode === "live" && !confirm("Use your Live account? The bot will trade real money there.")) return;
