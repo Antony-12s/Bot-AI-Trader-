@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, urlparse
 
 from config import ALIVE, APP_DIR, DEFAULTS, ENV_PATH, JOURNAL_PATH, STOP_FLAG, load_config
 from journal import Journal, summarize
+from mt5_proxy import call as mt5_call  # every MetaTrader5 call runs in a helper process (see mt5_proxy)
 from risk import SECONDS_PER_DAY, day_start
 
 PORT = int(os.environ.get("TRADEBOT_PORT", "8765"))  # change it if another program already uses 8765
@@ -310,30 +311,27 @@ def broker_login(body, path=ENV_PATH):
     """Log MT5 into the account from the form. Refused while a bot trades: it would switch under it."""
     if bot_running():
         raise ValueError("Stop the bot before switching accounts")
-    import broker
-    kind = broker.login(body.get("login", ""), body.get("password", ""), body.get("server", ""))
+    kind = mt5_call("login", body.get("login", ""), body.get("password", ""), body.get("server", ""))
     # filed under what the broker says it is (a real account can never land in the Demo slot); MODE is not changed
     save_settings({f"{kind.upper()}_LOGIN": str(body.get("login")).strip(), f"{kind.upper()}_SERVER": str(body.get("server")).strip()}, path)
-    return dict(broker.status(), saved_as=kind)
+    return dict(mt5_call("status"), saved_as=kind)
 
 
 def switch_mode(mode, path=ENV_PATH):
     """Demo / Live in the header: move TradeBot's MT5 to that mode's account, then save MODE."""
-    import broker
     if mode not in ("demo", "live"):
         raise ValueError("choose demo or live")
     if bot_running():
         raise ValueError("Stop the bot before switching between Demo and Live")
     values = read_env(path)
-    broker.switch(values[f"{mode.upper()}_LOGIN"], values[f"{mode.upper()}_SERVER"], mode)
+    mt5_call("switch", values[f"{mode.upper()}_LOGIN"], values[f"{mode.upper()}_SERVER"], mode)
     save_settings({"MODE": mode}, path)
     return public_settings(path)
 
 
 def broker_page():
-    import broker
     values = read_env()
-    return dict(broker.status(), accounts={mode: {"login": values[f"{mode.upper()}_LOGIN"], "server": values[f"{mode.upper()}_SERVER"]}
+    return dict(mt5_call("status"), accounts={mode: {"login": values[f"{mode.upper()}_LOGIN"], "server": values[f"{mode.upper()}_SERVER"]}
                                            for mode in ("demo", "live")})
 
 
@@ -461,20 +459,18 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/vendor/lightweight-charts.js":  # bundled, so the chart works offline
             return self.reply(200, VENDOR.joinpath("lightweight-charts.js").read_bytes(), "text/javascript; charset=utf-8")
         if url.path == "/api/chart":
-            import broker
             query = parse_qs(url.query)
             settings = read_env()
             journal = Journal(JOURNAL_PATH)
             try:
                 return self.reply(200, chart(journal, settings["SYMBOL"], query.get("tf", [settings["TIMEFRAME"]])[0],
-                                             int(query.get("count", ["300"])[0]), broker.candles))
+                                             int(query.get("count", ["300"])[0]), lambda *a: mt5_call("candles", *a)))
             finally:
                 journal.close()
         if url.path == "/api/app":
             return self.reply(200, {"run_at_login": __import__("desktop").run_at_login()})
         if url.path in ("/api/broker", "/api/broker/symbols"):
-            import broker  # here: the MetaTrader5 package only loads once the page asks for it
-            return self.reply(200, broker_page() if url.path == "/api/broker" else broker.symbols())
+            return self.reply(200, broker_page() if url.path == "/api/broker" else mt5_call("symbols"))
         self.reply(404, {"error": "not found"})
 
     def do_POST(self):
@@ -497,10 +493,10 @@ class Handler(BaseHTTPRequestHandler):
             "/api/myagents/mode": lambda: set_agent_mode(body.get("id"), body.get("mode")),
             "/api/myagents/delete": lambda: (delete_agent(body.get("id")), {"deleted": True})[1],
             "/api/app/show": lambda: (show_window and show_window(), {"shown": bool(show_window)})[1],
-            "/api/broker/install": lambda: (__import__("broker").start_install(), {"started": True})[1],
+            "/api/broker/install": lambda: (mt5_call("start_install"), {"started": True})[1],
             "/api/broker/mode": lambda: switch_mode(body.get("mode")),
-            "/api/broker/own": lambda: (__import__("broker").setup_own_terminal(), {"started": True})[1],
-            "/api/broker/show": lambda: {"windows": __import__("broker").show_terminal(bool(body.get("show")))},
+            "/api/broker/own": lambda: (mt5_call("setup_own_terminal"), {"started": True})[1],
+            "/api/broker/show": lambda: {"windows": mt5_call("show_terminal", bool(body.get("show")))},
         }
         action = actions.get(urlparse(self.path).path)
         if action is None:
@@ -577,7 +573,7 @@ def run_watchdog():
     last_problem = None
     while True:
         for step in (lambda: watch_bot(time.time()),
-                     lambda: __import__("broker").keep_hidden()):  # TradeBot's own MT5 stays hidden unless Show MT5
+                     lambda: mt5_call("keep_hidden")):  # TradeBot's own MT5 stays hidden unless Show MT5
             try:
                 step()
             except Exception as error:  # the watchdog must outlive any surprise; the windowed app has no console

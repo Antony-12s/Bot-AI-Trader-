@@ -8,7 +8,10 @@ from types import SimpleNamespace
 from unittest import mock
 
 import bot
+import mt5_proxy
 import ui
+
+mt5_proxy.INLINE = True  # these tests patch broker functions in this process
 from journal import Journal
 
 DAY = 86400

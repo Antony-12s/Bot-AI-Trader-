@@ -152,25 +152,27 @@ def show_terminal(show):
     return len(windows)
 
 
-FIRST_RUN_DIALOGS = ("Open an Account",)  # MT5's first-start wizard; it blocks the terminal until closed
+DIALOG_CLASS = "#32770"  # every Windows dialog box ("Open an Account", "Welcome to LiveUpdate", ...)
 
 
 def keep_hidden():
     """Called every few seconds: MT5 likes to pop its window back up (startup, reconnects).
 
-    Also closes the first-start "Open an Account" wizard: the owner logs in from TradeBot's
-    MetaTrader 5 page instead, and the terminal waits on that dialog until it goes.
+    While hidden, it also closes MT5's dialog boxes: nobody can see them, and a terminal waiting
+    on one ("Open an Account", "Welcome to LiveUpdate" on first start) answers no one, so every
+    call from TradeBot timed out. The owner logs in from TradeBot's MetaTrader 5 page instead.
+    With Show MT5 on, dialogs are left for the owner.
     """
-    if own_terminal() is None:
+    if own_terminal() is None or show_wanted["value"]:
         return
     import ctypes
     user32 = ctypes.windll.user32
     for hwnd in _terminal_windows():
-        title = ctypes.create_unicode_buffer(256)
-        user32.GetWindowTextW(hwnd, title, 256)
-        if title.value.startswith(FIRST_RUN_DIALOGS):
+        kind = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, kind, 64)
+        if kind.value == DIALOG_CLASS:
             user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE, as if Cancel was pressed
-        elif not show_wanted["value"] and user32.IsWindowVisible(hwnd):
+        elif user32.IsWindowVisible(hwnd):
             user32.ShowWindow(hwnd, 0)
 
 

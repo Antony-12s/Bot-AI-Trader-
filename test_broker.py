@@ -3,7 +3,10 @@ from types import SimpleNamespace
 from unittest import mock
 
 import broker
+import mt5_proxy
 import ui
+
+mt5_proxy.INLINE = True  # these tests patch broker functions in this process
 
 ACCOUNT = SimpleNamespace(
     login=123456, server="XMGlobal-MT5 6", name="Test", company="XM", currency="USD",

@@ -11,7 +11,7 @@ import runpy
 import sys
 from pathlib import Path
 
-SCRIPTS = ("bot", "wizard", "replay", "export_history", "report", "ui")
+SCRIPTS = ("bot", "wizard", "replay", "export_history", "report", "ui", "mt5_proxy")  # mt5_proxy: the app's MT5 helper
 
 
 def script_name(argv):
