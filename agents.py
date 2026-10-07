@@ -21,6 +21,7 @@ import strategies
 from config import APP_DIR
 
 AGENTS_PATH = APP_DIR / "agents.json"
+BRAKE_LOSSES = 4  # default: an Auto-trade agent goes back to Watch only after this many losses in a row
 MODES = ("watch", "suggest", "auto")
 RUNS = ("candle", "timer")
 ANALYSTS = ("rules", "saved", "claude", "openai", "gemini")  # saved = the AI order from Settings
@@ -31,7 +32,9 @@ AGENT_SYSTEM = """You are a trading agent inside an automated trading bot. The o
 
 Each time you run you get the strategy, and for one market: recent candles, indicator readings and the higher-timeframe trend. Decide buy, sell or hold for a new market position now, how confident you are (0 to 100) that the strategy's conditions are met, and why, in one short sentence.
 
-Position size, stop loss, take profit and daily limits are the bot's, not yours. Hold whenever the strategy's conditions are not clearly met."""
+Position size, stop loss, take profit and daily limits are the bot's, not yours. Hold whenever the strategy's conditions are not clearly met.
+
+You may also get your own track record and the lessons you drew from your closed trades. Use them to judge how sure you are and to avoid repeating a mistake, but the owner's strategy always comes first: a lesson never makes you trade against it."""
 
 AGENT_SCHEMA = {
     "type": "object",
@@ -83,6 +86,7 @@ def clean(raw):
         "mode": raw.get("mode", "watch"),
         "analyst": raw.get("analyst", "rules" if template else "saved"),
         "created_at": int(raw.get("created_at") or time.time()),
+        "brake_losses": int(raw.get("brake_losses", BRAKE_LOSSES) or 0),
     }
     problems = []
     if not name:
@@ -99,6 +103,8 @@ def clean(raw):
         problems.append("pick a timeframe")
     if agent["runs"] not in RUNS or not 1 <= agent["every_minutes"] <= 1440:
         problems.append("runs: every closed candle, or every 1 to 1440 minutes")
+    if not 0 <= agent["brake_losses"] <= 20:
+        problems.append("pause after 0 (never) to 20 losses in a row")
     if not 0 <= agent["min_confidence"] <= 100:
         problems.append("minimum confidence is 0 to 100")
     if agent["mode"] not in MODES:
@@ -173,8 +179,41 @@ def rsi_ranges(text):
     return ranges
 
 
-def decide(agent, candles, config, journal_spent=0.0):
+def ai_config(agent, config):
+    """The bot's config with this agent's AI: "saved" uses the order in Settings."""
+    return config if agent["analyst"] == "saved" else dict(config, AI_PROVIDER=agent["analyst"])
+
+
+def after_trade(agent, trade, journal, config, path_closes, run, spent=0.0, store_path=None):
+    """When one of the agent's trades closes: an AI agent writes a lesson it reads before its next calls,
+    and an agent on Auto-trade that just lost brake_losses times in a row is switched to Watch only.
+    Returns lines for the owner's notice."""
+    source, notes = "agent:" + agent["id"], []
+    if agent["analyst"] != "rules" and spent < config["AI_BUDGET_USD"]:
+        lesson, problem, cost = ai_strategy.reflect(trade, path_closes, ai_config(agent, config))
+        journal.record_decision(source, run, "reflect", trade["closed_at"], reason=problem, cost_usd=cost)
+        if lesson:
+            journal.add_lesson(trade["id"], lesson)
+            notes.append(f"lesson: {lesson}")
+    streak = 0
+    for past in reversed(journal.learned_trades((source,))):
+        if past["profit"] >= 0:
+            break
+        streak += 1
+    if agent["mode"] == "auto" and agent["brake_losses"] and streak >= agent["brake_losses"]:
+        # ponytail: the bot rewrites agents.json while the app may save it too; a save in that same
+        # instant can undo the pause. A shared lock file if that ever bites.
+        store([dict(a, mode="watch") if a["id"] == agent["id"] else a for a in load(store_path)], store_path)
+        why = f"lost {streak} trades in a row: switched to Watch only. Look at its record, then turn Auto-trade back on if you still trust it"
+        journal.record_decision(source, run, "agent", trade["closed_at"], "pause", f"{trade['symbol']} · 0% · {why}")
+        notes.append(f"Agent {agent['name']} {why}.")
+    return notes
+
+
+def decide(agent, candles, config, journal_spent=0.0, experience=""):
     """(signal or None, confidence, reason, cost_usd) for one market's closed candles.
+
+    experience: the agent's own track record and lessons (journal.experience_text), for an AI analyst.
 
     The enforced numbers are checked here, after the analyst: an RSI outside the strategy's range or
     a confidence under the minimum turns any call into a hold.
@@ -194,13 +233,15 @@ def decide(agent, candles, config, journal_spent=0.0):
     else:
         if journal_spent >= config["AI_BUDGET_USD"]:
             return None, 0, f"AI budget for today spent (${journal_spent:.2f})", 0.0
-        ai_config = config if agent["analyst"] == "saved" else dict(config, AI_PROVIDER=agent["analyst"])
         parts = [f"Your strategy, in the owner's words:\n{agent['strategy'] or 'Trade the setups below.'}"]
+        if experience:
+            parts.append(experience)
         if candidates:
             parts.append("Setups the strategy's template found on this candle:\n"
                          + "\n".join(f"- {name}: {signal} ({why})" for name, signal, why in candidates))
         parts.append("Market now:\n" + ai_strategy.snapshot(candles, config))
-        answer, problem, cost = ai_strategy.ask(AGENT_SYSTEM, "\n\n".join(parts), AGENT_SCHEMA, ai_config, ai_strategy.EFFORT)
+        answer, problem, cost = ai_strategy.ask(AGENT_SYSTEM, "\n\n".join(parts), AGENT_SCHEMA, ai_config(agent, config),
+                                                ai_strategy.EFFORT)
         if answer is None:
             return None, 0, problem, cost
         signal = answer["action"] if answer["action"] in ("buy", "sell") else None

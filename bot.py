@@ -273,6 +273,12 @@ def finish_trade(config, state, trade_id, price, closed_at, profit, outcome):
             text += "\nlesson: " + lesson
         if playbook:
             text += "\nplaybook rewritten:\n" + playbook
+    elif (trade.get("brain") or "").startswith("agent:"):
+        agent = next((a for a in agents.load() if "agent:" + a["id"] == trade["brain"]), None)
+        if agent:  # deleted agents learn nothing
+            path = price_path(dict(config, SYMBOL=trade["symbol"], TIMEFRAME=agent["timeframe"]), trade)
+            spent = journal.spend(since=day_start(closed_at))
+            text += "".join("\n" + note for note in agents.after_trade(agent, trade, journal, config, path, state["run"], spent))
     notify(config, text)
 
 
@@ -454,7 +460,8 @@ def run_agent_on(config, state, journal, paper, agent, frame, market):
     if tick.time - candle["time"] > STALE_CANDLES * candle_seconds(market_config):
         return  # the market is shut
     spent = journal.spend(since=day_start(tick.time)) if journal else 0.0
-    signal, confidence, reason, cost = agents.decide(agent, closed, market_config, spent)
+    experience = journal.experience_text(brains=("agent:" + agent["id"],)) if journal and agent["analyst"] != "rules" else ""
+    signal, confidence, reason, cost = agents.decide(agent, closed, market_config, spent, experience)
     note = f"{market} · {confidence}% · {reason}"
     if signal and agent["mode"] == "suggest":
         notify(config, f"Agent {agent['name']} suggests {signal.upper()} {market} ({confidence}%): {reason}")

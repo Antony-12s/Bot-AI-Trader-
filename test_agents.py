@@ -58,6 +58,71 @@ class BuiltInAnalystTest(unittest.TestCase):
         self.assertIn("not understood: the moon is full", str(caught.exception))
 
 
+class LearnAndBrakeTest(unittest.TestCase):
+    position = {"side": "buy", "lot": 0.01, "entry": 1.0, "sl": 0.9, "tp": 1.2}
+
+    def close(self, journal, brain, profit, at):
+        trade_id = journal.open_trade("paper", "r", "GOLD", dict(self.position, opened_at=at), brain=brain)
+        return journal.close_trade(trade_id, 1.1, at + 60, profit, "sl" if profit < 0 else "tp")
+
+    def test_auto_agent_pauses_after_losses_in_a_row(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, "agents.json")
+            agent = agents.clean(dict(GOOD, mode="auto", brake_losses=2))
+            other = agents.clean(dict(GOOD, name="Other", mode="auto"))
+            agents.store([agent, other], path)
+            journal, source = Journal(), "agent:" + agent["id"]
+            self.close(journal, source, -1.0, 100)
+            self.close(journal, "agent:" + other["id"], -1.0, 150)  # someone else's loss does not count
+            trade = self.close(journal, source, 2.0, 200)
+            self.assertEqual(agents.after_trade(agent, trade, journal, CONFIG, [], "r", store_path=path), [])  # a win resets it
+            self.close(journal, source, -1.0, 300)
+            trade = self.close(journal, source, -1.0, 400)
+            (note,) = agents.after_trade(agent, trade, journal, CONFIG, [], "r", store_path=path)
+            self.assertIn("lost 2 trades in a row: switched to Watch only", note)
+            self.assertEqual([a["mode"] for a in agents.load(path)], ["watch", "auto"])
+            (row,) = journal._rows("SELECT action FROM decisions WHERE kind = 'agent'")
+            self.assertEqual(row["action"], "pause")
+        with self.assertRaisesRegex(ValueError, "20 losses"):
+            agents.clean(dict(GOOD, brake_losses=21))
+        self.assertEqual(agents.clean(dict(GOOD, brake_losses=0))["brake_losses"], 0)  # 0 = never pause
+
+    def test_ai_agent_writes_a_lesson_and_reads_its_own_record(self):
+        agent = agents.clean(dict(GOOD, analyst="claude", brake_losses=0))
+        journal, source = Journal(), "agent:" + agent["id"]
+        trade = self.close(journal, source, -1.0, 100)
+        self.close(journal, "rules", -5.0, 200)  # not this agent's
+        with mock.patch.object(agents.ai_strategy, "reflect", return_value=("Wait for the close.", None, 0.01)) as reflect:
+            notes = agents.after_trade(agent, trade, journal, dict(CONFIG, AI_BUDGET_USD=5.0), [1.0, 0.9], "r")
+        self.assertEqual(reflect.call_args.args[2]["AI_PROVIDER"], "claude")
+        self.assertEqual(notes, ["lesson: Wait for the close."])
+        experience = journal.experience_text(brains=(source,))
+        self.assertIn("1 closed trades", experience)
+        self.assertIn("Wait for the close.", experience)
+        with mock.patch.object(agents.ai_strategy, "ask", return_value=({"action": "hold", "confidence": 0, "reason": "x"}, None, 0.0)) as ask:
+            agents.decide(agent, candles(FLAT)[:-1], dict(CONFIG, AI_BUDGET_USD=5.0), experience=experience)
+        self.assertIn("Wait for the close.", ask.call_args.args[1])
+        rules_agent = agents.clean(GOOD)
+        with mock.patch.object(agents.ai_strategy, "reflect") as reflect:
+            agents.after_trade(rules_agent, trade, journal, CONFIG, [], "r")
+        reflect.assert_not_called()  # the free built-in analyst has nothing to learn with
+
+
+class BotHandsClosedTradesToTheirAgentTest(unittest.TestCase):
+    def test_finish_trade_runs_after_trade_and_tells_the_owner(self):
+        agent = agents.clean(dict(GOOD, mode="auto"))
+        journal, notices = Journal(), []
+        trade_id = journal.open_trade("mt5", "r", "XAUUSD", {"side": "buy", "lot": 0.01, "entry": 1.0, "sl": 0.9, "tp": 1.2,
+                                                            "opened_at": 100}, brain="agent:" + agent["id"])
+        with mock.patch.object(bot.agents, "load", return_value=[agent]), \
+                mock.patch.object(bot.agents, "after_trade", return_value=["Agent Gold dip paused."]) as after, \
+                mock.patch.object(bot.mt5, "copy_rates_from_pos", return_value=None), \
+                mock.patch.object(bot, "notify", side_effect=lambda config, text: notices.append(text)):
+            bot.finish_trade(CONFIG, {"journal": journal, "run": "r"}, trade_id, 0.9, 1000, -1.0, "sl")
+        self.assertEqual(after.call_args.args[0]["id"], agent["id"])
+        self.assertTrue(notices[0].endswith("\nAgent Gold dip paused."))
+
+
 class MigrateTest(unittest.TestCase):
     def test_armed_strategies_become_auto_agents_once(self):
         with tempfile.TemporaryDirectory() as folder:

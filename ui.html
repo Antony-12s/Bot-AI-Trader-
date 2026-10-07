@@ -874,7 +874,8 @@ async function loadMyAgents() {
         <div class="sub" style="margin: 6px 0 10px">${esc(a.template ? plainName(a.template) : "Written from scratch")} · ${esc(a.timeframe)} · ${a.runs === "timer" ? `every ${a.every_minutes} min` : "every closed candle"}</div>
         <div class="rule">${esc(a.strategy || (PLAIN[a.template] || [])[2] || "")}</div>
         <div class="tags">${a.markets.slice(0, 4).map((m) => `<span>${esc(m)}</span>`).join("")}${a.markets.length > 4 ? `<span>+${a.markets.length - 4}</span>` : ""}
-          <span>${esc(analystName(a.analyst))}</span><span>${a.totals.trades ? `won ${Math.round(a.totals.win_rate * 100)}% of ${a.totals.trades}` : "no trades yet"}</span></div>
+          <span>${esc(analystName(a.analyst))}</span><span>${a.totals.trades ? `won ${Math.round(a.totals.win_rate * 100)}% of ${a.totals.trades}` : "no trades yet"}</span>
+          <span>${a.brake_losses ? `pauses after ${a.brake_losses} losses in a row` : "never pauses"}</span>${a.analyst === "rules" ? "" : "<span>learns from its trades</span>"}</div>
         <div class="latest">${(a.latest || []).map((l) => `<div class="sub"><b style="color: var(--text)">${esc(l.market)}</b> · ${when(l.at)} · <b class="${esc(l.action)}">${esc(l.action)}</b> ${esc((l.reason || "").split(" · ").slice(2).join(" · "))}</div>`).join("")
           || `<div class="sub">No checks yet: it decides each time a ${esc(a.timeframe)} candle closes, while the bot runs.</div>`}</div>
         <div class="seg" style="margin-top: 12px">${MODES.map(([id, label]) => `<button type="button" data-setmode="${id}" class="${a.mode === id ? "on" : ""}">${label}</button>`).join("")}</div>
@@ -889,7 +890,7 @@ const analystName = (id) => ({ rules: "Built-in rules (free)", saved: "Your AI o
 
 function startWizard(agent) {
   draft = agent ? JSON.parse(JSON.stringify(agent)) : { name: "New agent", template: "", strategy: "", markets: [], timeframe: timeframeNow,
-    runs: "candle", every_minutes: 15, min_confidence: 60, mode: "watch", analyst: "rules" };
+    runs: "candle", every_minutes: 15, min_confidence: 60, mode: "watch", analyst: "rules", brake_losses: 4 };
   wizStep = agent ? 1 : 0;
   renderWizard();
 }
@@ -955,7 +956,10 @@ const stepCareful = () => `
       <option value="timer" ${draft.runs === "timer" ? "selected" : ""}>On a timer</option></select>
       ${draft.runs === "timer" ? `<input data-f="every_minutes" type="number" min="1" max="1440" value="${draft.every_minutes}" style="margin-top: 8px"><small>minutes between runs (AI analysts only)</small>` : ""}</div>
     <div class="field"><label>Min confidence</label><input data-f="min_confidence" type="number" min="0" max="100" value="${draft.min_confidence}">
-      <small>0 to 100. A call less sure than this becomes a hold.</small></div></div>`;
+      <small>0 to 100. A call less sure than this becomes a hold.</small></div>
+    <div class="field"><label>Pause after losses in a row</label><input data-f="brake_losses" type="number" min="0" max="20" value="${draft.brake_losses ?? 4}">
+      <small>On Auto-trade, this many losing trades in a row switch it to Watch only and tell you. 0 = never.</small></div></div>
+  ${draft.analyst === "rules" ? "" : `<div class="sub" style="margin-top: 12px">Learns as it goes: after each of its trades closes, the AI writes one lesson, and it reads its own record and latest lessons before its next calls (one more AI call per closed trade). It can learn the wrong thing from a few lucky or unlucky trades; the pause above is the safety net.</div>`}`;
 
 const stepMayDo = () => `<div class="field"><label>What it may do</label><div class="modecards">${MODES.map(([id, label, text]) =>
   `<button type="button" data-mode-pick="${id}" class="${draft.mode === id ? "on" : ""}"><b>${label}</b><span>${text}</span></button>`).join("")}</div></div>`;

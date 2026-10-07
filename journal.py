@@ -131,12 +131,12 @@ class Journal:
             sql, params = sql + " AND run = ?", params + [run]
         return self._rows(sql + " ORDER BY closed_at, id", params)
 
-    def learned_trades(self):
-        """Closed trades the AI decided (any source): its track record."""
-        marks = ", ".join("?" * len(LEARNING_BRAINS))
+    def learned_trades(self, brains=LEARNING_BRAINS):
+        """Closed trades the AI decided (any source): its track record. brains=("agent:<id>",) for one agent's."""
+        marks = ", ".join("?" * len(brains))
         return self._rows(
             f"SELECT * FROM trades WHERE closed_at IS NOT NULL AND brain IN ({marks}) ORDER BY closed_at, id",
-            LEARNING_BRAINS,
+            tuple(brains),
         )
 
     def close_trade(self, trade_id, exit, closed_at, profit, outcome):
@@ -169,10 +169,16 @@ class Journal:
             sql, params = sql + " AND run = ?", params + [run]
         return self.connection.execute(sql, params).fetchone()[0]
 
-    def recent_lessons(self, limit=5):
+    def recent_lessons(self, limit=5, brains=None):
+        if brains is None:
+            return self._rows(
+                "SELECT * FROM trades WHERE lesson IS NOT NULL ORDER BY closed_at DESC, id DESC LIMIT ?",
+                (limit,),
+            )
+        marks = ", ".join("?" * len(brains))
         return self._rows(
-            "SELECT * FROM trades WHERE lesson IS NOT NULL ORDER BY closed_at DESC, id DESC LIMIT ?",
-            (limit,),
+            f"SELECT * FROM trades WHERE lesson IS NOT NULL AND brain IN ({marks}) ORDER BY closed_at DESC, id DESC LIMIT ?",
+            (*brains, limit),
         )
 
     # --- playbook ---------------------------------------------------------
@@ -190,9 +196,11 @@ class Journal:
 
     # --- what the brain gets to read -------------------------------------------
 
-    def experience_text(self, lessons=5):
-        """The AI brain's own track record (trades it decided), formatted for its prompt."""
-        trades = self.learned_trades()
+    def experience_text(self, lessons=5, brains=None):
+        """The AI brain's own track record (trades it decided), formatted for its prompt.
+
+        brains=("agent:<id>",) gives one agent's record and its lessons only; the playbook is the bot brain's."""
+        trades = self.learned_trades(brains or LEARNING_BRAINS)
         if not trades:
             return "Your track record: no closed trades yet. Trade cautiously and build one."
         totals = summarize(trades)
@@ -207,10 +215,10 @@ class Journal:
             if side in totals["by_side"]:
                 part = totals["by_side"][side]
                 lines.append(f"{side.capitalize()}s: {part['trades']} trades, {part['win_rate']:.0%} wins, net {part['net']:+.2f}.")
-        playbook = self.playbook()
+        playbook = None if brains else self.playbook()
         if playbook:
             lines += [f"Your playbook (rules you distilled after {playbook['trades_seen']} trades):", playbook["text"]]
-        recent = self.recent_lessons(lessons)
+        recent = self.recent_lessons(lessons, brains)
         if recent:
             lines.append(f"Lessons from your last {len(recent)} trades, newest first:")
             lines += [f"- ({t['side']} {t['outcome']} {t['profit']:+.2f}) {t['lesson']}" for t in recent]
