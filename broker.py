@@ -88,7 +88,7 @@ def setup_own_terminal(source=None):
         return
     found = [source] if source else installed_terminals()
     if not found:
-        raise ValueError("no MetaTrader 5 on this PC yet: install it first (Setup, step 1)")
+        raise ValueError("no MetaTrader 5 on this PC yet: install it first (Settings → Setup, step 1)")
     origin = Path(found[0]).parent
 
     def work():
@@ -170,7 +170,7 @@ def open_terminal():
     import ctypes
     terminal = terminal_in_use()
     if terminal is None:
-        raise ValueError("MetaTrader 5 is not installed yet: see Setup, step 1")
+        raise ValueError("MetaTrader 5 is not installed yet: see Settings → Setup, step 1")
     # the main window only: MT5 also owns hidden helper windows with titles ("GDI+ Window") that must stay hidden
     windows = [hwnd for hwnd in _terminal_windows(terminal) if _class_of(hwnd).startswith(MAIN_CLASS)]
     if not windows:

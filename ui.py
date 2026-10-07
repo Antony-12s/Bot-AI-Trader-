@@ -349,18 +349,26 @@ def switch_mode(mode, path=ENV_PATH):
 
 
 def follow_account(live_ok=False, path=ENV_PATH):
-    """Demo / Live follows the account MetaTrader 5 is logged in to, and files it in that mode's slot.
+    """Demo / Live follows the account MetaTrader 5 is logged in to, and that account is always filed in
+    its type's slot (a record only: it trades nothing), however it was logged in, by the app or in MT5.
     Demo is followed at once; a real account only with live_ok (the user said yes), else {"ask": login}.
     Until then MODE stays demo and the bot refuses the real account (risk.account_error)."""
     account = mt5_call("status")
     if not account.get("logged_in"):
         return {}
     kind = "demo" if account["demo"] else "live"
-    if read_env(path)["MODE"] == kind:
+    values = read_env(path)
+    slot = {f"{kind.upper()}_LOGIN": str(account["login"]), f"{kind.upper()}_SERVER": account["server"]}
+    changes = {key: value for key, value in slot.items() if values[key] != value}
+    if values["MODE"] != kind:
+        if kind == "live" and not live_ok:
+            if changes:
+                save_settings(changes, path)
+            return {"ask": account["login"], "server": account["server"]}
+        changes["MODE"] = kind
+    if not changes:
         return {}
-    if kind == "live" and not live_ok:
-        return {"ask": account["login"], "server": account["server"]}
-    save_settings({"MODE": kind, f"{kind.upper()}_LOGIN": str(account["login"]), f"{kind.upper()}_SERVER": account["server"]}, path)
+    save_settings(changes, path)
     return {"settings": public_settings(path)}
 
 

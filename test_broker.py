@@ -228,6 +228,7 @@ class BrokerTest(unittest.TestCase):
             with mock.patch.object(broker, "status", return_value=real):
                 self.assertEqual(ui.follow_account(False, env), {"ask": 450272430, "server": "XMGlobal-MT5 20"})
                 self.assertEqual(ui.read_env(env)["MODE"], "demo")  # not without the user's yes
+                self.assertEqual(ui.read_env(env)["LIVE_LOGIN"], "450272430")  # but its slot is filled: a record, it trades nothing
                 ui.follow_account(True, env)
             saved = ui.read_env(env)
             self.assertEqual((saved["MODE"], saved["LIVE_LOGIN"], saved["LIVE_SERVER"]), ("live", "450272430", "XMGlobal-MT5 20"))
@@ -237,6 +238,10 @@ class BrokerTest(unittest.TestCase):
             self.assertEqual(ui.read_env(env)["DEMO_LOGIN"], "111")
             with mock.patch.object(broker, "status", return_value={"logged_in": False}):
                 self.assertEqual(ui.follow_account(True, env), {})
+            env.write_text("MODE=live\n", encoding="utf-8")  # Live set by hand, MT5 logged in outside the app
+            with mock.patch.object(broker, "status", return_value=real):
+                self.assertEqual(ui.follow_account(False, env)["settings"]["MODE"], "live")  # no question: nothing switches
+            self.assertEqual(ui.read_env(env)["LIVE_LOGIN"], "450272430")
 
     def test_dashboard_refuses_to_switch_accounts_under_a_running_bot(self):
         mocks = self.patched()
