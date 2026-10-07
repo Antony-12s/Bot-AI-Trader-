@@ -151,3 +151,18 @@
 - บอทแตะ bot.alive ทุกรอบ หน้าเว็บใช้ดูว่ามีบอทรันอยู่ กัน Start ซ้อนสองตัวบนบัญชีเดียว
   - เกิน 120 วินาทีไม่แตะ ถือว่าตาย (ถ้า AI call นานกว่านั้นจะโชว์ผิดเป็น stopped)
 - launcher.py ตั้ง line buffering เอง เพราะ exe จาก PyInstaller ไม่สน PYTHONUNBUFFERED ทำให้ bot.log ว่าง
+
+## 2026-10-07 ทำให้เหมือน AutoBotSignal (เฉพาะส่วนที่ถูกกฎ)
+
+- แกะ AutoBotSignal ดูแค่ระดับโครงสร้าง ไม่ถอดโค้ด: Tauri UI + engine Python (PyInstaller) + Chrome
+  - ไม่ลอก: undetected chromedriver/stealth, จ้างแก้ captcha, API โบรกเกอร์ที่คนแกะเอง (ผิด ToS เสี่ยงบัญชีโดนแบน)
+  - ไม่ลอกโค้ด/โลโก้/ชื่อ เอาแค่ไอเดีย UX
+- หน้าต่างแอป: pywebview (WebView2 ที่มากับ Windows) แทน Tauri, installer ยังเล็ก (~23MB)
+  - ไม่ทำ tray: บอทเป็น process แยก ปิดหน้าต่างแล้วบอทยังรัน
+- MAX_TRADES_PER_DAY ค่าเริ่ม 0 = ไม่จำกัด เพื่อไม่เปลี่ยนพฤติกรรมบอทเดิม
+- Agents = strategy แต่ละตัว จับคู่เทรดจาก reason "name: ..." (AI brain เขียน reason เอง เลยไม่นับเข้า agent ไหน)
+- Signals: TradingView ส่ง webhook ได้แค่ URL สาธารณะ เราไม่มีเซิร์ฟเวอร์ → ใช้ ntfy.sh (ฟรี ไม่ต้องสมัคร)
+  - topic สุ่มยาวคือ secret ตัวเดียว, บอท poll ทุกรอบ 5 วิ ด้วย urllib ไม่ต้องลง lib
+  - สัญญาณบอกแค่ buy/sell, lot/SL/TP/กฎความเสี่ยงยังเป็นของบอททั้งหมด (current_block ตัวเดียวกับ strategies)
+  - สัญญาณที่ส่งมาตอนบอทปิดจะถูกข้าม ไม่เทรดย้อนหลัง
+  - Telegram /buy /sell ใช้บอท Telegram ของเราเอง ไม่ล็อกอินด้วยเบอร์แบบ AutoBotSignal

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -145,6 +146,54 @@ def arm(name, armed, path=ENV_PATH):
     save_settings({"STRATEGY": "all" if len(ordered) == len(STRATEGIES) else ",".join(ordered)}, path)
 
 
+def signal_sources(journal, path=ENV_PATH):
+    """The Signals page: each source's switch and setup, and every outside signal on record."""
+    import signals
+    from strategies import STRATEGIES, selected
+    values = read_env(path)
+    return {
+        "strategies": {"armed": len(selected(values)), "total": len(STRATEGIES), "brain": values["BRAIN"]},
+        "webhook": {"on": values["SIGNAL_WEBHOOK"] == "on", "url": signals.webhook_url(values["WEBHOOK_TOPIC"]) if values["WEBHOOK_TOPIC"] else ""},
+        "telegram": {"on": values["SIGNAL_TELEGRAM"] == "on", "ready": bool(values["TELEGRAM_TOKEN"] and values["TELEGRAM_CHAT_ID"])},
+        "history": journal._rows(
+            "SELECT at, source, action, reason FROM decisions WHERE kind = 'signal' ORDER BY id DESC LIMIT 200"
+        ),
+    }
+
+
+def switch_source(source, on, path=ENV_PATH):
+    """Turn the webhook or Telegram source on or off; the webhook gets a secret topic the first time."""
+    import signals
+    if source == "webhook":
+        changes = {"SIGNAL_WEBHOOK": "on" if on else "off"}
+        if on and not read_env(path)["WEBHOOK_TOPIC"]:
+            changes["WEBHOOK_TOPIC"] = signals.new_topic()
+        save_settings(changes, path)
+    elif source == "telegram":
+        save_settings({"SIGNAL_TELEGRAM": "on" if on else "off"}, path)
+    else:
+        raise ValueError(f"unknown signal source {source}")
+
+
+def rotate_topic(path=ENV_PATH):
+    """New secret webhook topic: the old URL stops working, paste the new one into TradingView."""
+    import signals
+    save_settings({"WEBHOOK_TOPIC": signals.new_topic()}, path)
+
+
+def ping_webhook(path=ENV_PATH, opener=urllib.request.urlopen):
+    """Send "test ping" through the relay: a running bot logs it as skipped (no buy or sell), nothing trades."""
+    import signals
+    topic = read_env(path)["WEBHOOK_TOPIC"]
+    if not topic:
+        raise ValueError("turn the TradingView source on first")
+    try:
+        with opener(urllib.request.Request(signals.webhook_url(topic), data=b"test ping", method="POST"), timeout=10):
+            pass
+    except OSError as error:
+        raise ValueError(f"could not reach ntfy.sh: {error}") from None
+
+
 def read_env(path=ENV_PATH):
     values = dict(DEFAULTS)
     if path.exists():
@@ -231,6 +280,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, history(journal))
             finally:
                 journal.close()
+        if url.path == "/api/signals":
+            journal = Journal(JOURNAL_PATH)
+            try:
+                return self.reply(200, signal_sources(journal))
+            finally:
+                journal.close()
         if url.path == "/api/agents":
             journal = Journal(JOURNAL_PATH)
             try:
@@ -253,6 +308,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/bot/start": lambda: (start_bot(), bot_status())[1],
             "/api/bot/stop": lambda: (stop_bot(), bot_status())[1],
             "/api/agents/arm": lambda: (arm(body.get("name"), bool(body.get("armed"))), public_settings())[1],
+            "/api/signals/switch": lambda: (switch_source(body.get("source"), bool(body.get("on"))), public_settings())[1],
+            "/api/signals/rotate": lambda: (rotate_topic(), public_settings())[1],
+            "/api/signals/ping": lambda: (ping_webhook(), {"sent": True})[1],
         }
         action = actions.get(urlparse(self.path).path)
         if action is None:

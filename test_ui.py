@@ -163,6 +163,46 @@ class AgentsTest(unittest.TestCase):
             ui.arm("nope", True, self.env)
 
 
+class SignalsPageTest(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.env = Path(folder.name, ".env")
+        self.env.write_text("MODE=dry\n", encoding="utf-8")
+
+    def test_webhook_gets_a_secret_topic_once_and_rotates_on_request(self):
+        ui.switch_source("webhook", True, self.env)
+        topic = ui.read_env(self.env)["WEBHOOK_TOPIC"]
+        self.assertGreater(len(topic), 20)
+        ui.switch_source("webhook", False, self.env)
+        ui.switch_source("webhook", True, self.env)
+        self.assertEqual(ui.read_env(self.env)["WEBHOOK_TOPIC"], topic)  # same URL, TradingView keeps working
+        ui.rotate_topic(self.env)
+        self.assertNotEqual(ui.read_env(self.env)["WEBHOOK_TOPIC"], topic)
+        page = ui.signal_sources(Journal(), self.env)
+        self.assertTrue(page["webhook"]["on"])
+        self.assertTrue(page["webhook"]["url"].endswith(ui.read_env(self.env)["WEBHOOK_TOPIC"]))
+
+    def test_telegram_source_needs_a_telegram_bot(self):
+        with self.assertRaises(ValueError):
+            ui.switch_source("telegram", True, self.env)
+        with self.assertRaises(ValueError):
+            ui.switch_source("email", True, self.env)
+
+    def test_history_lists_outside_signals_only(self):
+        journal = Journal()
+        journal.record_decision("webhook", "r", "signal", 5, "buy", "traded: buy")
+        journal.record_decision("bot", "r", "decide", 6, "hold", "no setup")
+        self.assertEqual([row["reason"] for row in ui.signal_sources(journal, self.env)["history"]], ["traded: buy"])
+
+    def test_ping_posts_a_harmless_message_to_the_topic(self):
+        sent = []
+        ui.switch_source("webhook", True, self.env)
+        ui.ping_webhook(self.env, opener=lambda request, timeout: sent.append(request) or mock.MagicMock())
+        self.assertEqual((sent[0].data, sent[0].get_method()), (b"test ping", "POST"))
+        self.assertIsNone(__import__("signals").parse("test ping")[0])  # a running bot will not trade it
+
+
 class TrustTest(unittest.TestCase):
     def trusted(self, headers):
         return ui.Handler.trusted(SimpleNamespace(headers=headers))

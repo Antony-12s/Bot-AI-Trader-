@@ -72,6 +72,13 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: tran
 .ladder { background: var(--panel2); border-radius: 12px; padding: 12px; }
 .ladder .meter { height: 10px; }
 .ladder .meter i { background: linear-gradient(90deg, var(--accent), var(--win)); }
+.copy { display: flex; gap: 8px; margin: 6px 0 4px; }
+.copy input { font-family: Consolas, monospace; font-size: 13px; }
+.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; font: inherit; cursor: pointer; white-space: nowrap; }
+details { background: var(--panel2); border-radius: 12px; padding: 12px; margin-top: 14px; }
+summary { cursor: pointer; font-weight: 600; }
+details ol { padding-left: 20px; color: var(--muted); }
+code { background: var(--bg); padding: 1px 6px; border-radius: 6px; color: var(--text); }
 .settings-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .settings { display: grid; grid-template-columns: 240px 1fr; gap: 18px; align-items: start; }
 .subnav { display: flex; flex-direction: column; gap: 4px; }
@@ -108,6 +115,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <div class="group">• TRADE</div>
   <a href="#dashboard" data-page="dashboard">Dashboard</a>
   <a href="#history" data-page="history">History</a>
+  <a href="#signals" data-page="signals">Signals</a>
   <div class="group">• AUTOMATION</div>
   <a href="#agents" data-page="agents">Agents</a>
   <div class="group">• APP</div>
@@ -155,6 +163,20 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
         <tbody id="trades"></tbody>
       </table>
       <div class="sub" style="margin-top: 10px">Click a trade for the reason it was opened and the lesson the AI took from it. Newest 200.</div>
+    </div>
+  </section>
+
+  <section id="signals" hidden>
+    <div class="sub" style="margin: -8px 0 14px">Turn sources on and the bot trades what they deliver. Every signal still passes your risk limits, lot and stops.</div>
+    <div class="three">
+      <div class="card"><div class="label" style="color: var(--accent)">• Sources</div><div class="list" id="sourcelist"></div></div>
+      <div class="card" id="source"></div>
+      <div class="card">
+        <div class="chart-head"><div class="label">Signal history</div>
+          <div class="seg" id="sigfilter"><button data-f="all" class="on">All</button><button data-f="traded">Traded</button><button data-f="skipped">Skipped</button></div></div>
+        <div class="feed" id="sigfeed"></div>
+        <div class="sub" style="margin-top: 8px">Every outside signal is recorded, traded or not.</div>
+      </div>
     </div>
   </section>
 
@@ -409,7 +431,88 @@ $("agent").addEventListener("click", async (event) => {
   loadAgents();
 });
 
-const PAGES = { dashboard: "Dashboard", history: "History", agents: "AI Agents", settings: "Settings" };
+let sig = null, pickedSource = "webhook", sigFilter = "all";
+async function loadSignals() {
+  sig = await api("/api/signals");
+  const sources = [
+    ["strategies", "Strategies", `${sig.strategies.armed} of ${sig.strategies.total} armed · brain ${sig.strategies.brain}`, true],
+    ["webhook", "TradingView", sig.webhook.on ? "on · alerts via webhook" : "off · alerts from your charts", sig.webhook.on],
+    ["telegram", "Telegram", sig.telegram.ready ? (sig.telegram.on ? "on · /buy and /sell" : "off · /buy and /sell") : "needs a Telegram bot first", sig.telegram.on],
+  ];
+  $("sourcelist").innerHTML = sources.map(([id, name, sub, on]) => `
+    <div class="agent ${on ? "armed" : ""} ${id === pickedSource ? "on" : ""}" data-source="${id}"><b>${name}</b><div class="sub">${esc(sub)}</div></div>`).join("");
+  $("source").innerHTML = pickedSource === "strategies" ? `
+      <b style="font-size: 20px">Strategies</b>
+      <div class="sub" style="margin: 8px 0 14px">The bot's own setups, checked on every closed candle. ${sig.strategies.armed} of ${sig.strategies.total} are armed; the brain is <b>${esc(sig.strategies.brain)}</b>.</div>
+      <a class="ghost" href="#agents" style="text-decoration: none">Open Agents to arm or disarm</a>`
+    : pickedSource === "webhook" ? `
+      <div class="agent-head"><div><b style="font-size: 20px">TradingView</b><div class="sub">Any TradingView alert becomes a trade signal</div></div>
+        <button class="switch ${sig.webhook.on ? "on" : ""}" data-switch="webhook"></button></div>
+      ${sig.webhook.url ? `
+        <div class="label" style="margin-top: 16px">Webhook URL</div>
+        <div class="copy"><input readonly value="${esc(sig.webhook.url)}" id="hookurl"><button class="ghost" data-act="copy">Copy</button></div>
+        <div class="sub">The URL is the key: anyone who has it can send signals. Keep it private.</div>
+        <div class="copy" style="margin-top: 12px"><button class="ghost" data-act="ping">Send test ping</button><button class="ghost" data-act="rotate">New URL</button></div>
+        <div class="sub" id="pingmsg"></div>` : `<div class="sub" style="margin-top: 16px">Turn it on to get your private webhook URL.</div>`}
+      <details><summary>Setup guide: TradingView</summary><ol>
+        <li>Turn this source on and copy the webhook URL.</li>
+        <li>In TradingView, create an alert on the chart of the market this bot trades.</li>
+        <li>Notifications: tick <b>Webhook URL</b> and paste the URL.</li>
+        <li>Message: <code>buy</code> or <code>sell</code>. For strategy alerts <code>{{strategy.order.action}}</code> works too.</li>
+        <li>Start the bot. Alerts sent while it is stopped are skipped, never traded late.</li>
+      </ol><div class="sub">Alerts pass through ntfy.sh, a free public relay. They carry only the words buy or sell.</div></details>`
+    : `
+      <div class="agent-head"><div><b style="font-size: 20px">Telegram</b><div class="sub">Trade by sending /buy or /sell to your bot</div></div>
+        <button class="switch ${sig.telegram.on ? "on" : ""}" data-switch="telegram"></button></div>
+      <div class="sub" style="margin-top: 16px">${sig.telegram.ready
+        ? "Only your own chat (TELEGRAM_CHAT_ID) is obeyed; messages from anyone else are ignored."
+        : "Set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID in Settings → Keys &amp; Telegram first."}</div>
+      <details><summary>Setup guide: Telegram</summary><ol>
+        <li>Create a bot with @BotFather and put its token in Settings.</li>
+        <li>Message your bot once; the bot log shows your chat id. Put it in Settings.</li>
+        <li>Turn this source on, then Stop and Start the bot.</li>
+        <li>Send <code>/buy</code> or <code>/sell</code>. /status, /pause and /stop keep working as before.</li>
+      </ol></details>`;
+  const rows = sig.history.filter((s) => sigFilter === "all" || s.reason.startsWith(sigFilter));
+  $("sigfeed").innerHTML = rows.length ? rows.map((s) => `
+    <div class="item"><b class="${esc(s.action)}">${esc(s.action).toUpperCase()}</b><span class="sub">${when(s.at)} · ${esc(s.source)}</span>
+    <div>${esc(s.reason)}</div></div>`).join("") : `<div class="empty">Nothing from this source yet</div>`;
+}
+
+$("sourcelist").addEventListener("click", (event) => {
+  const card = event.target.closest("[data-source]");
+  if (card) { pickedSource = card.dataset.source; loadSignals(); }
+});
+$("sigfilter").addEventListener("click", (event) => {
+  if (!event.target.dataset.f) return;
+  sigFilter = event.target.dataset.f;
+  for (const button of $("sigfilter").children) button.classList.toggle("on", button === event.target);
+  loadSignals();
+});
+$("source").addEventListener("click", async (event) => {
+  const target = event.target;
+  try {
+    if (target.dataset.switch) {
+      const on = !target.classList.contains("on");
+      if (on && mode === "live" && !confirm("MODE is live: signals from this source will trade real money. Turn it on?")) return;
+      showMode(await api("/api/signals/switch", { source: target.dataset.switch, on }));
+      if ($("go").textContent === "Stop") alert("Saved. Stop and Start the bot to apply.");
+    } else if (target.dataset.act === "copy") {
+      $("hookurl").select(); navigator.clipboard?.writeText($("hookurl").value); target.textContent = "Copied";
+      return;
+    } else if (target.dataset.act === "rotate") {
+      if (!confirm("Make a new URL? The old one stops working: update your TradingView alerts.")) return;
+      await api("/api/signals/rotate", {});
+    } else if (target.dataset.act === "ping") {
+      await api("/api/signals/ping", {});
+      $("pingmsg").textContent = "Sent. A running bot logs it as skipped within a few seconds: the path works, nothing traded.";
+      return;
+    } else return;
+  } catch (error) { alert(error.message); }
+  loadSignals();
+});
+
+const PAGES = { dashboard: "Dashboard", history: "History", signals: "Signals", agents: "AI Agents", settings: "Settings" };
 function route() {
   const page = location.hash.slice(1) in PAGES ? location.hash.slice(1) : "dashboard";
   for (const id in PAGES) $(id).hidden = id !== page;
@@ -417,6 +520,7 @@ function route() {
   $("title").textContent = PAGES[page];
   if (page === "history") loadHistory();
   if (page === "agents") loadAgents();
+  if (page === "signals") loadSignals();
 }
 addEventListener("hashchange", route);
 

@@ -34,6 +34,9 @@ DEFAULTS = {
     "FILLING": "IOC",
     "TELEGRAM_TOKEN": "",
     "TELEGRAM_CHAT_ID": "",
+    "SIGNAL_WEBHOOK": "off",
+    "WEBHOOK_TOPIC": "",
+    "SIGNAL_TELEGRAM": "off",
 }
 NUMBER_TYPES = {
     "AI_BUDGET_USD": float,
@@ -87,6 +90,12 @@ def load_config(env_path=ENV_PATH):
         raise SystemExit(f"unknown TIMEFRAME {config['TIMEFRAME']!r}, use one of {' '.join(TIMEFRAME_SECONDS)}")
     if config["FILLING"] not in FILLING_MODES:
         raise SystemExit(f"unknown FILLING {config['FILLING']!r}, use IOC, FOK or RETURN")
+    if config["SIGNAL_WEBHOOK"] not in ("on", "off") or config["SIGNAL_TELEGRAM"] not in ("on", "off"):
+        raise SystemExit("SIGNAL_WEBHOOK and SIGNAL_TELEGRAM must be on or off")
+    if config["SIGNAL_WEBHOOK"] == "on" and len(config["WEBHOOK_TOPIC"]) < 20:
+        raise SystemExit("SIGNAL_WEBHOOK=on needs a WEBHOOK_TOPIC of 20+ characters: it is the only secret")
+    if config["SIGNAL_TELEGRAM"] == "on" and not (config["TELEGRAM_TOKEN"] and config["TELEGRAM_CHAT_ID"]):
+        raise SystemExit("SIGNAL_TELEGRAM=on needs TELEGRAM_TOKEN and TELEGRAM_CHAT_ID")
     return config
 
 

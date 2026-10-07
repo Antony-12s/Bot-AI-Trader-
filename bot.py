@@ -24,6 +24,7 @@ import ai_strategy
 import brain
 import fills
 import indicators
+import signals
 from config import ALIVE, ENV_PATH, JOURNAL_PATH, STOP_FLAG, candle_seconds
 from config import load_config as load_settings
 from journal import Journal, summarize
@@ -99,6 +100,11 @@ def handle_command(text, config, state):
     if command == "/stop":
         state["stopping"] = True
         return "stopping: the bot exits now and the watchdog will not restart it (open positions keep their SL/TP)"
+    if command in ("/buy", "/sell"):
+        if config["SIGNAL_TELEGRAM"] != "on":
+            return "Telegram signals are off: turn them on in the dashboard's Signals page"
+        state.setdefault("pending", []).append(("telegram", command[1:]))
+        return f"{command[1:]} signal queued: it trades if the risk rules allow"
     if command == "/status":
         return status_text(config, state)
     if command == "/playbook" and journal:
@@ -333,13 +339,7 @@ def check_market(config, state):
     age = tick.time - candle_time
     if age > STALE_CANDLES * candle_seconds(config):
         return remember(state, f"skipped: candle closed {age // 60} min ago, the market was shut")
-    spread_points = round((tick.ask - tick.bid) / symbol_info.point)
-    start = day_start(tick.time)
-    open_count = len(open_positions(config)) + (len(journal.open_trades("paper")) if paper else 0)
-    pnl = pnl_today(tick.time) + (journal.profit_since(start, "paper") if paper else 0.0)
-    spent = journal.spend(source="bot", since=start) if journal else 0.0
-    traded = journal.trades_opened_since(start, "paper" if paper else "mt5") if journal else 0
-    blocked = block_reason(state["paused"], open_count, pnl, spread_points, config, spent, traded)
+    blocked, spread_points = current_block(config, state, tick, symbol_info)
     if blocked:
         return remember(state, "skipped: " + blocked)  # checked first: a blocked candle costs no AI call
     experience = journal.experience_text() if journal and brain.learns(config) else ""
@@ -347,24 +347,76 @@ def check_market(config, state):
     if journal:
         journal.record_decision("bot", state["run"], "decide", candle_time, signal or "hold", reason, cost)
     remember(state, f"{signal or 'hold'}: {reason}")
-    if not signal:
-        return
+    if signal:
+        # the AI call can take a while, so price the order from a fresh tick
+        open_trade(config, state, signal, reason, closed_candles, mt5.symbol_info_tick(config["SYMBOL"]) or tick,
+                   symbol_info, spread_points, config["BRAIN"])
+
+
+def current_block(config, state, tick, symbol_info):
+    """(why no new trade is allowed now or None, spread in points): the risk rules every signal passes."""
+    journal = state.get("journal")
+    paper = journal is not None and config["MODE"] == "dry"
+    spread_points = round((tick.ask - tick.bid) / symbol_info.point)
+    start = day_start(tick.time)
+    open_count = len(open_positions(config)) + (len(journal.open_trades("paper")) if paper else 0)
+    pnl = pnl_today(tick.time) + (journal.profit_since(start, "paper") if paper else 0.0)
+    spent = journal.spend(source="bot", since=start) if journal else 0.0
+    traded = journal.trades_opened_since(start, "paper" if paper else "mt5") if journal else 0
+    return block_reason(state["paused"], open_count, pnl, spread_points, config, spent, traded), spread_points
+
+
+def open_trade(config, state, side, reason, closed_candles, tick, symbol_info, spread_points, decided_by):
+    """Place the order (paper in dry mode) and journal it. Returns True when a position opened."""
+    journal = state.get("journal")
     atr_values = indicators.atr(closed_candles, config["ATR_PERIOD"])
-    # the AI call can take a while, so price the order from a fresh tick
-    fresh_tick = mt5.symbol_info_tick(config["SYMBOL"]) or tick
-    opened = place_order(
-        signal, fresh_tick, symbol_info, config, reason, atr_values[-1] if atr_values else None, spread_points
-    )
+    opened = place_order(side, tick, symbol_info, config, reason, atr_values[-1] if atr_values else None, spread_points)
     if opened and journal:
         position = {
-            "side": signal, "lot": opened["volume"], "entry": opened["price"], "sl": opened["sl"],
-            "tp": opened["tp"], "opened_at": fresh_tick.time, "reason": reason,
+            "side": side, "lot": opened["volume"], "entry": opened["price"], "sl": opened["sl"],
+            "tp": opened["tp"], "opened_at": tick.time, "reason": reason,
         }
         journal.open_trade(
-            "paper" if paper else "mt5", state["run"], config["SYMBOL"], position,
+            "paper" if config["MODE"] == "dry" else "mt5", state["run"], config["SYMBOL"], position,
             position_id=opened.get("position_id"), snapshot=ai_strategy.snapshot(closed_candles, config),
-            brain=config["BRAIN"],
+            brain=decided_by,
         )
+    return bool(opened)
+
+
+def outside_signals(config, state):
+    """Trade the queued TradingView (webhook) and Telegram signals under the same risk rules."""
+    if config["SIGNAL_WEBHOOK"] == "on":
+        try:
+            texts, state["webhook_since"] = signals.poll(config["WEBHOOK_TOPIC"], state["webhook_since"])
+            state["pending"] += [("webhook", text) for text in texts]
+        except Exception as error:  # the relay being down must not stop the bot
+            print("webhook poll failed:", error)
+    while state["pending"]:
+        source, text = state["pending"].pop(0)
+        side, why = signals.parse(text)
+        tick = mt5.symbol_info_tick(config["SYMBOL"])
+        symbol_info = mt5.symbol_info(config["SYMBOL"])
+        if side and (tick is None or symbol_info is None):
+            why = "no price from MT5"
+        elif side:
+            blocked, spread_points = current_block(config, state, tick, symbol_info)
+            why = blocked
+            if not blocked:
+                # closed candles only (start at 1): the ATR for the stops and the snapshot the AI learns from
+                timeframe = getattr(mt5, "TIMEFRAME_" + config["TIMEFRAME"])
+                rates = mt5.copy_rates_from_pos(config["SYMBOL"], timeframe, 1, brain.candles_needed(config))
+                if rates is None or len(rates) < 2:
+                    why = "no candles from MT5"
+                elif not open_trade(config, state, side, f"{source}: {text.strip()[:80]}", to_candles(rates),
+                                    tick, symbol_info, spread_points, source):
+                    why = "order rejected by the broker"
+        outcome = f"{side or 'no'} signal from {source}: " + (f"skipped, {why}" if why else "traded")
+        state["last_decision"] = outcome
+        notify(config, outcome)  # prints it too
+        if state.get("journal"):
+            at = tick.time if tick else int(time.time())
+            state["journal"].record_decision(source, state["run"], "signal", at, side or "invalid", ("skipped: " + why) if why else "traded: " + text.strip()[:80])
 
 
 def should_stop(state):
@@ -391,6 +443,8 @@ def main():
             "update_offset": 0,
             "journal": journal,
             "run": f"{config['MODE']}-{datetime.now():%Y%m%d-%H%M%S}",
+            "pending": [],  # (source, text) signals waiting for the risk rules
+            "webhook_since": str(int(time.time())),  # alerts sent while the bot was off are stale, skip them
         }
         if STOP_FLAG.exists():
             STOP_FLAG.unlink()
@@ -403,6 +457,7 @@ def main():
                 if config["MODE"] != "dry":
                     settle_mt5(config, state)
                 check_market(config, state)
+                outside_signals(config, state)
             time.sleep(POLL_SECONDS)
         STOP_FLAG.touch()
         notify(config, "bot stopped by /stop or the dashboard")

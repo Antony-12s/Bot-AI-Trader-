@@ -31,6 +31,10 @@ CONFIG = {
     "FILLING": "IOC",
     "TELEGRAM_TOKEN": "token",
     "TELEGRAM_CHAT_ID": "111",
+    "MAX_TRADES_PER_DAY": 0,
+    "SIGNAL_WEBHOOK": "off",
+    "WEBHOOK_TOPIC": "",
+    "SIGNAL_TELEGRAM": "off",
 }
 CANDLE = 900  # M15
 TICK = SimpleNamespace(ask=2650.50, bid=2650.20, time=10 * SECONDS_PER_DAY + 3600)
@@ -259,6 +263,50 @@ class PaperTest(unittest.TestCase):
         self.assertEqual(closed["closed_at"], rates[-2]["time"] + CANDLE)  # that candle's close time
         self.assertIn("closed buy 0.01 XAUUSD @ 2645.5 by sl, profit -5.00", self.notices)
         self.assertEqual(self.journal.open_trades(), [])  # flat prices: no new cross, no re-entry
+
+    def run_signals(self, config, webhook_texts=()):
+        rates = candles(FLAT)[:-1]  # closed candles only, as outside_signals asks for
+        with mock.patch.object(bot.signals, "poll", return_value=(list(webhook_texts), "cursor")) as poll, \
+                mock.patch.object(bot.mt5, "copy_rates_from_pos", return_value=rates), \
+                mock.patch("builtins.print"), \
+                mock.patch.object(bot.mt5, "symbol_info_tick", return_value=TICK), \
+                mock.patch.object(bot.mt5, "symbol_info", return_value=GOLD), \
+                mock.patch.object(bot.mt5, "positions_get", return_value=()), \
+                mock.patch.object(bot.mt5, "history_deals_get", return_value=()), \
+                mock.patch.object(bot, "notify", side_effect=lambda config, text: self.notices.append(text)):
+            bot.outside_signals(config, self.state)
+        return poll
+
+    def signal_rows(self):
+        return self.journal._rows("SELECT source, action, reason FROM decisions WHERE kind = 'signal' ORDER BY id")
+
+    def test_webhook_signals_trade_under_the_same_risk_rules(self):
+        self.state.update(pending=[], webhook_since="0")
+        config = dict(self.config, SIGNAL_WEBHOOK="on", WEBHOOK_TOPIC="t" * 24)
+        poll = self.run_signals(config, ['{"action": "sell"}', "buy", "hello"])
+        poll.assert_called_once_with("t" * 24, "0")
+        self.assertEqual(self.state["webhook_since"], "cursor")
+        (trade,) = self.journal.open_trades("paper")
+        self.assertEqual((trade["side"], trade["brain"]), ("sell", "webhook"))
+        rows = self.signal_rows()
+        self.assertEqual([(row["action"], row["reason"].split(":")[0]) for row in rows],
+                         [("sell", "traded"), ("buy", "skipped"), ("invalid", "skipped")])
+        self.assertIn("position already open", rows[1]["reason"])
+
+    def test_webhook_off_is_never_polled(self):
+        self.state.update(pending=[], webhook_since="0")
+        self.run_signals(self.config).assert_not_called()
+
+    def test_telegram_buy_needs_signals_on_and_then_trades(self):
+        self.state["pending"] = []
+        self.assertIn("off", bot.handle_command("/buy", self.config, self.state))
+        self.assertEqual(self.state["pending"], [])
+        config = dict(self.config, SIGNAL_TELEGRAM="on")
+        self.assertIn("queued", bot.handle_command("/buy", config, self.state))
+        self.run_signals(config)
+        (trade,) = self.journal.open_trades("paper")
+        self.assertEqual((trade["side"], trade["brain"]), ("buy", "telegram"))
+        self.assertIn("buy signal from telegram: traded", self.notices)
 
     def test_paper_losses_count_against_the_daily_limit(self):
         self.run_check(candles(CROSS_UP))
