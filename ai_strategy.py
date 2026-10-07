@@ -19,8 +19,8 @@ import anthropic
 import indicators
 from config import candle_seconds
 
-MODEL = "claude-opus-5-5"
-EFFORT = "medium"  # low | medium | high: higher thinks longer and costs more per candle
+MODEL = "claude-sonnet-5-5"  # half the price of claude-opus-5-5; switch back here if the decisions get worse
+EFFORT = "medium"  # low | medium | high: higher thinks longer and costs more per candle (Sonnet 5.5 defaults to high)
 CANDLES_NEEDED = 300  # the higher-timeframe EMA (4 candles per bar) needs a few multiples of its period
 CLOSES_SHOWN = 30
 CANDLES_SHOWN = 10
@@ -30,9 +30,9 @@ HIGHER_SHOWN = 8
 PATH_SHOWN = 40  # closes of the price path shown when reflecting on a closed trade
 DISTILL_EVERY = 10  # closed trades between playbook rewrites
 
-# USD per million tokens for claude-opus-5-5 on the Claude API, October 2026. When the
+# USD per million tokens for claude-sonnet-5-5 on the Claude API, October 2026. When the
 # fallback serves another model the real bill differs a little: treat spend as an estimate.
-PRICES = {"input": 4.0, "output": 20.0, "cache_write": 5.0, "cache_read": 0.20}
+PRICES = {"input": 2.0, "output": 10.0, "cache_write": 2.5, "cache_read": 0.20}
 
 Decision = namedtuple("Decision", "signal reason cost_usd")
 

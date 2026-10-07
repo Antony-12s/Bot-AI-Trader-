@@ -44,7 +44,7 @@ class DecideTest(unittest.TestCase):
         decision, create = self.ask()
         self.assertEqual(decision, ("buy", "AI: trend up", 0.0))
         request = create.call_args.kwargs
-        self.assertEqual(request["model"], "claude-opus-5-5")
+        self.assertEqual(request["model"], "claude-sonnet-5-5")
         self.assertEqual(request["fallbacks"], "default")
         self.assertEqual(request["output_config"]["format"]["schema"], ai_strategy.DECISION_SCHEMA)
         content = request["messages"][0]["content"]
@@ -80,7 +80,7 @@ class DecideTest(unittest.TestCase):
 
     def test_cost_is_estimated_from_usage(self):
         decision, _ = self.ask(usage=USAGE)
-        self.assertEqual(decision.cost_usd, 0.014)  # 1000 in at $4/M + 500 out at $20/M
+        self.assertEqual(decision.cost_usd, 0.007)  # 1000 in at $2/M + 500 out at $10/M
         self.assertEqual(ai_strategy.cost_usd(None), 0.0)
         self.assertEqual(ai_strategy.cost_usd(mock.MagicMock()), 0.0)  # unknown shapes count as free
 
@@ -98,7 +98,7 @@ class DecideTest(unittest.TestCase):
             decision, _ = self.ask(**dict({"usage": USAGE}, **failure))
             self.assertIsNone(decision.signal, msg=failure)
             self.assertTrue(decision.reason.startswith("AI error"), msg=decision.reason)
-            self.assertEqual(decision.cost_usd, 0.0 if "error" in failure else 0.014, msg=failure)
+            self.assertEqual(decision.cost_usd, 0.0 if "error" in failure else 0.007, msg=failure)
 
     def test_too_few_candles_skips_the_api_call(self):
         with mock.patch.object(ai_strategy.anthropic, "Anthropic") as client_class:
@@ -113,7 +113,7 @@ class ReviewTest(unittest.TestCase):
             lesson, problem, cost = ai_strategy.reflect(TRADE, [2001.0, 2003.0, 2005.0], CONFIG)
         finally:
             patcher.stop()
-        self.assertEqual((lesson, problem, cost), ("Do not short while RSI climbs.", None, 0.014))
+        self.assertEqual((lesson, problem, cost), ("Do not short while RSI climbs.", None, 0.007))
         content = create.call_args.kwargs["messages"][0]["content"]
         self.assertIn("Trade: sell 0.01 XAUUSD at 2000.0, stop 2005.0, target 1990.0.", content)
         self.assertIn("Your reason at entry: AI: lower highs", content)
