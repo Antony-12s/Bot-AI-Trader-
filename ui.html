@@ -54,6 +54,24 @@ input, select { width: 100%; background: var(--bg); color: var(--text); border: 
 input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
 .save { background: var(--accent); color: #1a0d00; border: 0; border-radius: 12px; padding: 11px 22px; font: inherit; font-weight: 700; cursor: pointer; }
 .msg { margin-left: 12px; font-size: 14px; }
+.three { display: grid; grid-template-columns: 260px 1fr 320px; gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .three { grid-template-columns: 1fr; } }
+.list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.agent { background: var(--panel2); border: 1px solid transparent; border-radius: 12px; padding: 10px 12px; cursor: pointer; }
+.agent.on { border-color: var(--accent); background: #24170a; }
+.agent .sub::before { content: "●"; margin-right: 6px; color: var(--muted); }
+.agent.armed .sub::before { color: var(--win); }
+.agent-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.switch { width: 46px; height: 26px; border-radius: 13px; background: var(--line); border: 0; position: relative; cursor: pointer; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--text); transition: left .15s; }
+.switch.on { background: var(--win); }
+.switch.on::after { left: 23px; }
+.mini { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
+.mini > div { background: var(--panel2); border-radius: 12px; padding: 12px; }
+.mini b { font-size: 22px; display: block; }
+.ladder { background: var(--panel2); border-radius: 12px; padding: 12px; }
+.ladder .meter { height: 10px; }
+.ladder .meter i { background: linear-gradient(90deg, var(--accent), var(--win)); }
 .settings-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .settings { display: grid; grid-template-columns: 240px 1fr; gap: 18px; align-items: start; }
 .subnav { display: flex; flex-direction: column; gap: 4px; }
@@ -90,6 +108,8 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <div class="group">• TRADE</div>
   <a href="#dashboard" data-page="dashboard">Dashboard</a>
   <a href="#history" data-page="history">History</a>
+  <div class="group">• AUTOMATION</div>
+  <a href="#agents" data-page="agents">Agents</a>
   <div class="group">• APP</div>
   <a href="#settings" data-page="settings">Settings</a>
   <div class="counter">
@@ -135,6 +155,15 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
         <tbody id="trades"></tbody>
       </table>
       <div class="sub" style="margin-top: 10px">Click a trade for the reason it was opened and the lesson the AI took from it. Newest 200.</div>
+    </div>
+  </section>
+
+  <section id="agents" hidden>
+    <div class="sub" style="margin: -8px 0 14px">Each agent is one rules strategy. Armed agents propose trades; risk limits still decide. Changes apply when the bot starts.</div>
+    <div class="three">
+      <div class="card"><div class="label" style="color: var(--accent)">• Your agents</div><div class="list" id="agentlist"></div></div>
+      <div class="card" id="agent"></div>
+      <div class="card"><div class="label" style="color: var(--accent)">• Decisions</div><div class="feed" id="agentfeed"></div></div>
     </div>
   </section>
 
@@ -281,9 +310,7 @@ async function loadDashboard() {
   $("spend").textContent = "$" + data.ai_spend.toFixed(2);
   $("stats").textContent = t.trades ? `net ${money(t.net)} · max drawdown $${t.max_drawdown.toFixed(2)} · ${t.trades} trades` : "";
   drawChart(data.equity);
-  $("feed").innerHTML = data.decisions.length ? data.decisions.map((d) => `
-    <div class="item"><b class="${esc(d.action)}">${esc(d.action).toUpperCase()}</b><span class="sub">${when(d.at)} · ${esc(d.source)}</span>
-    <div>${esc(d.reason)}</div></div>`).join("") : `<div class="empty">No decisions yet</div>`;
+  $("feed").innerHTML = feedHtml(data.decisions);
 }
 
 // Every section stays in the form (hidden ones too), so Save always sends all of them.
@@ -343,13 +370,53 @@ $("range").addEventListener("click", (event) => {
   loadDashboard();
 });
 
-const PAGES = { dashboard: "Dashboard", history: "History", settings: "Settings" };
+let agentList = [], picked = null;
+const feedHtml = (items) => items.length ? items.map((d) => `
+  <div class="item"><b class="${esc(d.action)}">${esc(d.action).toUpperCase()}</b><span class="sub">${when(d.at)} · ${esc(d.source)}</span>
+  <div>${esc(d.reason)}</div></div>`).join("") : `<div class="empty">No decisions yet</div>`;
+
+async function loadAgents() {
+  agentList = await api("/api/agents");
+  if (!agentList.some((a) => a.name === picked)) picked = (agentList.find((a) => a.armed) || agentList[0]).name;
+  $("agentlist").innerHTML = agentList.map((a) => `
+    <div class="agent ${a.armed ? "armed" : ""} ${a.name === picked ? "on" : ""}" data-name="${esc(a.name)}">
+      <b>${esc(a.name)}</b><div class="sub">${a.totals.trades ? Math.round(a.totals.win_rate * 100) + "% of " + a.totals.trades : "no trades yet"} · ${a.armed ? "armed" : "off"}</div></div>`).join("");
+  const a = agentList.find((x) => x.name === picked), t = a.totals;
+  const verdict = t.trades >= 100 ? "enough to judge; arming is still your call" : t.trades >= 30 ? "an early read, keep watching" : "too few to judge yet: replay it first (train.bat)";
+  $("agent").innerHTML = `
+    <div class="agent-head"><div><b style="font-size: 20px">${esc(a.name)}</b><div class="sub">${esc(a.about)}</div></div>
+      <button class="switch ${a.armed ? "on" : ""}" id="arm" title="${a.armed ? "Disarm" : "Arm"}"></button></div>
+    <div class="mini">
+      <div><b class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${t.trades ? Math.round(t.win_rate * 100) + "%" : "—"}</b><span class="sub">win rate · ${t.wins}W / ${t.losses}L</span></div>
+      <div><b>${t.trades}</b><span class="sub">settled · ${a.live_trades} paper/live, ${t.trades - a.live_trades} replay</span></div>
+      <div><b class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${money(t.net)}</b><span class="sub">net · profit factor ${t.profit_factor ?? "—"}</span></div>
+      <div><b>${t.longest_losing_streak}</b><span class="sub">longest losing streak · drawdown $${t.max_drawdown.toFixed(2)}</span></div>
+    </div>
+    <div class="ladder"><div class="label">Trust ladder</div><div class="meter"><i style="width: ${a.trust * 100}%"></i></div>
+      <div class="sub" style="margin-top: 8px"><b style="color: var(--text)">${t.trades} settled</b> · ${verdict}</div></div>`;
+  $("agentfeed").innerHTML = feedHtml(a.decisions);
+}
+
+$("agentlist").addEventListener("click", (event) => {
+  const card = event.target.closest(".agent");
+  if (card) { picked = card.dataset.name; loadAgents(); }
+});
+$("agent").addEventListener("click", async (event) => {
+  if (event.target.id !== "arm") return;
+  const a = agentList.find((x) => x.name === picked);
+  try { showMode(await api("/api/agents/arm", { name: a.name, armed: !a.armed })); }
+  catch (error) { alert(error.message); }
+  loadAgents();
+});
+
+const PAGES = { dashboard: "Dashboard", history: "History", agents: "AI Agents", settings: "Settings" };
 function route() {
   const page = location.hash.slice(1) in PAGES ? location.hash.slice(1) : "dashboard";
   for (const id in PAGES) $(id).hidden = id !== page;
   for (const link of document.querySelectorAll("nav a")) link.classList.toggle("on", link.dataset.page === page);
   $("title").textContent = PAGES[page];
   if (page === "history") loadHistory();
+  if (page === "agents") loadAgents();
 }
 addEventListener("hashchange", route);
 

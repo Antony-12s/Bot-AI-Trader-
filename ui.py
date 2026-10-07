@@ -104,6 +104,47 @@ def dashboard(journal, days, now=None):
     }
 
 
+TRUST_TRADES = 100  # closed trades before a record is worth judging, the Trust Ladder's top
+
+
+def agents(journal, config):
+    """One card per strategy: armed or not, its record, and its latest decisions.
+
+    Trades are matched by the "name: reason" text the rules brain writes; the AI brains
+    word their own reasons, so their trades show up under no strategy.
+    """
+    from strategies import STRATEGIES, selected  # here: strategies imports config, keep ui light at import
+    armed = set(selected(config))
+    trades = journal.closed_trades()
+    decisions = journal._rows("SELECT at, action, reason, source FROM decisions WHERE kind = 'decide' ORDER BY id DESC LIMIT 500")
+    cards = []
+    for name, function in STRATEGIES.items():
+        mine = [trade for trade in trades if (trade["reason"] or "").startswith(name + ":")]
+        live = [trade for trade in mine if trade["source"] != "replay"]
+        cards.append({
+            "name": name,
+            "about": (function.__doc__ or "").strip().splitlines()[0] if function.__doc__ else "",
+            "armed": name in armed,
+            "totals": summarize(mine),
+            "live_trades": len(live),
+            "trust": min(1.0, len(mine) / TRUST_TRADES),
+            "decisions": [d for d in decisions if (d["reason"] or "").startswith(name + ":")][:20],
+        })
+    return cards
+
+
+def arm(name, armed, path=ENV_PATH):
+    """Add or remove one strategy from STRATEGY in .env."""
+    from strategies import STRATEGIES, selected
+    if name not in STRATEGIES:
+        raise ValueError(f"unknown strategy {name}")
+    names = [n for n in selected(read_env(path)) if n != name] + ([name] if armed else [])
+    if not names:
+        raise ValueError("keep at least one strategy armed, or Stop the bot instead")
+    ordered = [n for n in STRATEGIES if n in names]
+    save_settings({"STRATEGY": "all" if len(ordered) == len(STRATEGIES) else ",".join(ordered)}, path)
+
+
 def read_env(path=ENV_PATH):
     values = dict(DEFAULTS)
     if path.exists():
@@ -167,6 +208,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")  # an updated install must never show the old page
         self.end_headers()
         self.wfile.write(data)
 
@@ -189,6 +231,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, history(journal))
             finally:
                 journal.close()
+        if url.path == "/api/agents":
+            journal = Journal(JOURNAL_PATH)
+            try:
+                return self.reply(200, agents(journal, read_env()))
+            finally:
+                journal.close()
         if url.path == "/api/settings":
             return self.reply(200, public_settings())
         if url.path == "/api/bot":
@@ -204,12 +252,15 @@ class Handler(BaseHTTPRequestHandler):
             "/api/settings": lambda: (save_settings(body), public_settings())[1],
             "/api/bot/start": lambda: (start_bot(), bot_status())[1],
             "/api/bot/stop": lambda: (stop_bot(), bot_status())[1],
+            "/api/agents/arm": lambda: (arm(body.get("name"), bool(body.get("armed"))), public_settings())[1],
         }
         action = actions.get(urlparse(self.path).path)
         if action is None:
             return self.reply(404, {"error": "not found"})
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            if not isinstance(body, dict):
+                raise ValueError("expected a JSON object")
             self.reply(200, action())
         except ValueError as error:
             self.reply(400, {"error": str(error)})
