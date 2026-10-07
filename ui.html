@@ -237,7 +237,9 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <section id="price" hidden>
     <div class="chart-head" style="margin: -8px 0 12px">
       <div class="sub" id="pricesub">Live candles from MetaTrader 5 with the bot's trades on them.</div>
-      <div class="seg" id="tfs"></div>
+      <div style="display: flex; gap: 10px; align-items: center">
+        <input id="chartsym" list="chartsyms" placeholder="Market, e.g. EURUSD" style="width: 180px" autocomplete="off"><datalist id="chartsyms"></datalist>
+        <div class="seg" id="tfs"></div></div>
     </div>
     <div class="card" id="pricebox" style="height: calc(100vh - 230px); min-height: 420px; padding: 6px"></div>
     <div class="sub" style="margin-top: 8px">▲ the bot bought · ▼ the bot sold · ● a trade closed, with its profit · lines: the open trade's entry, stop loss and take profit</div>
@@ -1092,7 +1094,7 @@ $("agentsview").addEventListener("click", async (event) => {
 });
 
 // --- Chart: lightweight-charts (TradingView, Apache-2.0), loaded from the app itself on first use ---
-let priceChart = null, candleSeries = null, markerLayer = null, priceLines = [], chartTf = null, lastFull = 0;
+let priceChart = null, candleSeries = null, markerLayer = null, priceLines = [], chartTf = null, chartSym = "", lastFull = 0;
 const loadChartLib = () => window.LightweightCharts ? Promise.resolve() : new Promise((done, fail) => {
   const script = document.createElement("script");
   script.src = "/vendor/lightweight-charts.js"; script.onload = done; script.onerror = () => fail(new Error("chart library missing"));
@@ -1105,7 +1107,10 @@ async function loadPrice(full = true) {
     chartTf = chartTf || timeframeNow;
     $("tfs").innerHTML = Object.keys({ M1: 1, M5: 1, M15: 1, M30: 1, H1: 1, H4: 1, D1: 1 }).map((t) =>
       `<button data-tf="${t}" class="${t === chartTf ? "on" : ""}">${t}</button>`).join("");
-    const data = await api(`/api/chart?tf=${chartTf}&count=${full ? 400 : 3}`);
+    const data = await api(`/api/chart?tf=${chartTf}&count=${full ? 400 : 3}` + (chartSym ? "&sym=" + encodeURIComponent(chartSym) : ""));
+    if (document.activeElement !== $("chartsym")) $("chartsym").value = data.symbol;
+    if (!$("chartsyms").options.length) api("/api/broker/symbols").then((names) =>
+      $("chartsyms").innerHTML = names.map((n) => `<option value="${esc(n)}">`).join("")).catch(() => {});
     $("pricesub").textContent = `${data.symbol} · ${data.timeframe} candles from MetaTrader 5 (broker server time), with the bot's trades on them.`;
     if (!priceChart) {
       const L = window.LightweightCharts;
@@ -1121,6 +1126,9 @@ async function loadPrice(full = true) {
       markerLayer = L.createSeriesMarkers(candleSeries, []);
     }
     if (!full) { for (const candle of data.candles) candleSeries.update(candle); return; }
+    // ponytail: decimals guessed from the price (EURUSD 5, USDJPY 3, GOLD 2); the broker's own digits if a market looks off
+    const last = data.candles.at(-1)?.close || 0, digits = last < 10 ? 5 : last < 1000 ? 3 : 2;
+    candleSeries.applyOptions({ priceFormat: { type: "price", precision: digits, minMove: 10 ** -digits } });
     candleSeries.setData(data.candles);
     markerLayer.setMarkers(data.marks.map((m) => m.kind === "open"
       ? { time: m.time, position: m.side === "buy" ? "belowBar" : "aboveBar", shape: m.side === "buy" ? "arrowUp" : "arrowDown",
@@ -1132,9 +1140,14 @@ async function loadPrice(full = true) {
     lastFull = Date.now();
   } catch (error) {
     if (!priceChart) $("pricebox").innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+    else if (full) $("pricesub").innerHTML = `<span class="loss">${esc(error.message)}</span>`;  // e.g. a market name the broker lacks
   }
 }
 
+$("chartsym").addEventListener("change", () => {  // picked from the list, or typed and Enter
+  chartSym = $("chartsym").value.trim();
+  loadPrice(true);
+});
 $("tfs").addEventListener("click", (event) => {
   if (!event.target.dataset.tf) return;
   chartTf = event.target.dataset.tf;

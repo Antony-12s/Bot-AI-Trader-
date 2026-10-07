@@ -488,7 +488,7 @@ class Handler(BaseHTTPRequestHandler):
             settings = read_env()
             journal = Journal(JOURNAL_PATH)
             try:
-                return self.reply(200, chart(journal, settings["SYMBOL"], query.get("tf", [settings["TIMEFRAME"]])[0],
+                return self.reply(200, chart(journal, query.get("sym", [settings["SYMBOL"]])[0], query.get("tf", [settings["TIMEFRAME"]])[0],
                                              int(query.get("count", ["300"])[0]), lambda *a: mt5_call("candles", *a)))
             finally:
                 journal.close()
