@@ -512,8 +512,8 @@ async function loadSignals() {
         <li>Turn this source on and copy the webhook URL.</li>
         <li>In TradingView, create an alert on the chart of the market this bot trades.</li>
         <li>Notifications: tick <b>Webhook URL</b> and paste the URL.</li>
-        <li>Message: <code>buy</code> or <code>sell</code>. For strategy alerts <code>{{strategy.order.action}}</code> works too.</li>
-        <li>Start the bot. Alerts sent while it is stopped are skipped, never traded late.</li>
+        <li>Message: <code>buy</code> or <code>sell</code>. For strategy alerts use <code>{{strategy.market_position}}</code>: it says long, short or flat, and flat (an exit) is never traded.</li>
+        <li>Start the bot. Alerts that reach it more than a minute late (bot stopped, MT5 down) are skipped, never traded late. Exits like "close long" are skipped too: the bot's own stop loss and take profit close its trades.</li>
       </ol><div class="sub">Alerts pass through ntfy.sh, a free public relay. They carry only the words buy or sell.</div></details>`
     : `
       <div class="agent-head"><div><b style="font-size: 20px">Telegram</b><div class="sub">Trade by sending /buy or /sell to your bot</div></div>

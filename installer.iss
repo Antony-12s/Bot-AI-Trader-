@@ -40,6 +40,14 @@ Name: "{autodesktop}\TradeBot"; Filename: "{app}\TradeBot.exe"; Parameters: "ui.
 [Run]
 Filename: "{app}\TradeBot.exe"; Parameters: "ui.py"; WorkingDir: "{app}"; Description: "Launch TradeBot"; Flags: postinstall nowait skipifsilent
 
+[UninstallDelete]
+; .env holds the Anthropic key and Telegram token: do not leave them behind. journal.db (trade history) stays.
+Type: files; Name: "{app}\.env"
+Type: files; Name: "{app}\.env.check"
+Type: files; Name: "{app}\bot.log"
+Type: files; Name: "{app}\bot.alive"
+Type: files; Name: "{app}\stop.flag"
+
 [UninstallRun]
 ; Drop the logon task install_autostart.bat may have created; harmless when it does not exist.
 Filename: "schtasks.exe"; Parameters: "/delete /f /tn ""Bot AI Trader"""; Flags: runhidden; RunOnceId: "DropAutostart"

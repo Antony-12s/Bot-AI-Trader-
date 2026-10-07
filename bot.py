@@ -13,6 +13,7 @@ Unattended running: run_forever.bat restarts the bot after a crash, install_auto
 starts it at logon, /stop from Telegram ends it for good (until the next start).
 """
 import json
+import socket
 import time
 import urllib.parse
 import urllib.request
@@ -104,7 +105,7 @@ def handle_command(text, config, state):
     if command in ("/buy", "/sell"):
         if config["SIGNAL_TELEGRAM"] != "on":
             return "Telegram signals are off: turn them on in the dashboard's Signals page"
-        state.setdefault("pending", []).append(("telegram", command[1:]))
+        state.setdefault("pending", []).append(("telegram", command[1:], time.time()))
         return f"{command[1:]} signal queued: it trades if the risk rules allow"
     if command == "/status":
         return status_text(config, state)
@@ -394,16 +395,19 @@ def outside_signals(config, state):
     """Trade the queued TradingView (webhook) and Telegram signals under the same risk rules."""
     if config["SIGNAL_WEBHOOK"] == "on":
         try:
-            texts, state["webhook_since"] = signals.poll(config["WEBHOOK_TOPIC"], state["webhook_since"])
-            state["pending"] += [("webhook", text) for text in texts]
+            messages, state["webhook_since"] = signals.poll(config["WEBHOOK_TOPIC"], state["webhook_since"])
+            state["pending"] += [("webhook", text, sent_at) for text, sent_at in messages]
         except Exception as error:  # the relay being down must not stop the bot
             print("webhook poll failed:", error)
     while state["pending"]:
-        source, text = state["pending"].pop(0)
+        source, text, sent_at = state["pending"].pop(0)
         side, why = signals.parse(text)
         tick = mt5.symbol_info_tick(config["SYMBOL"])
         symbol_info = mt5.symbol_info(config["SYMBOL"])
-        if side and (tick is None or symbol_info is None):
+        late = signals.too_old(sent_at, time.time())  # queued while MT5 was down, or the relay lagged
+        if side and late:
+            why = late
+        elif side and (tick is None or symbol_info is None):
             why = "no price from MT5"
         elif side:
             blocked, spread_points = current_block(config, state, tick, symbol_info)
@@ -430,8 +434,25 @@ def should_stop(state):
     return bool(state.get("stopping")) or STOP_FLAG.exists()
 
 
+INSTANCE_PORT = 47821  # held while a bot runs: the OS frees it the moment the process ends, even on a crash
+
+
+def single_instance():
+    """A socket only one process can bind: two bots on one account would double every signal."""
+    lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):  # Windows: no other socket may share the port
+        lock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    try:
+        lock.bind(("127.0.0.1", INSTANCE_PORT))
+    except OSError:
+        lock.close()
+        raise SystemExit("another TradeBot bot is already running on this PC; stop it first") from None
+    return lock
+
+
 def main():
     config = load_config()
+    instance = single_instance()  # noqa: F841 - held open until the process exits
     if not mt5.initialize():
         raise SystemExit(f"cannot connect to MT5 (is the terminal open and logged in?): {mt5.last_error()}")
     journal = Journal(JOURNAL_PATH)
@@ -449,7 +470,7 @@ def main():
             "update_offset": 0,
             "journal": journal,
             "run": f"{config['MODE']}-{datetime.now():%Y%m%d-%H%M%S}",
-            "pending": [],  # (source, text) signals waiting for the risk rules
+            "pending": [],  # (source, text, sent_at) signals waiting for the risk rules
             "webhook_since": str(int(time.time())),  # alerts sent while the bot was off are stale, skip them
         }
         if STOP_FLAG.exists():

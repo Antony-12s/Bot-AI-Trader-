@@ -26,7 +26,7 @@ LOG_PATH = APP_DIR / "bot.log"
 SECRETS = ("ANTHROPIC_API_KEY", "TELEGRAM_TOKEN")  # never sent to the page, only "set" or not
 # ponytail: one loop of the bot (an AI call included) must finish within this, or it shows as stopped
 ALIVE_SECONDS = 120
-SAVE_LOCK = threading.Lock()
+SAVE_LOCK = threading.RLock()  # re-entrant: arm() and switch_source() hold it around save_settings()
 BOT_LOCK = threading.Lock()
 bot_process = None  # the bot this dashboard started, if any
 
@@ -140,11 +140,12 @@ def arm(name, armed, path=ENV_PATH):
     from strategies import STRATEGIES, selected
     if name not in STRATEGIES:
         raise ValueError(f"unknown strategy {name}")
-    names = [n for n in selected(read_env(path)) if n != name] + ([name] if armed else [])
-    if not names:
-        raise ValueError("keep at least one strategy armed, or Stop the bot instead")
-    ordered = [n for n in STRATEGIES if n in names]
-    save_settings({"STRATEGY": "all" if len(ordered) == len(STRATEGIES) else ",".join(ordered)}, path)
+    with SAVE_LOCK:  # read and write as one step: two quick arms must both stick
+        names = [n for n in selected(read_env(path)) if n != name] + ([name] if armed else [])
+        if not names:
+            raise ValueError("keep at least one strategy armed, or Stop the bot instead")
+        ordered = [n for n in STRATEGIES if n in names]
+        save_settings({"STRATEGY": "all" if len(ordered) == len(STRATEGIES) else ",".join(ordered)}, path)
 
 
 def signal_sources(journal, path=ENV_PATH):
@@ -166,10 +167,11 @@ def switch_source(source, on, path=ENV_PATH):
     """Turn the webhook or Telegram source on or off; the webhook gets a secret topic the first time."""
     import signals
     if source == "webhook":
-        changes = {"SIGNAL_WEBHOOK": "on" if on else "off"}
-        if on and not read_env(path)["WEBHOOK_TOPIC"]:
-            changes["WEBHOOK_TOPIC"] = signals.new_topic()
-        save_settings(changes, path)
+        with SAVE_LOCK:  # the topic check and the save are one step
+            changes = {"SIGNAL_WEBHOOK": "on" if on else "off"}
+            if on and not read_env(path)["WEBHOOK_TOPIC"]:
+                changes["WEBHOOK_TOPIC"] = signals.new_topic()
+            save_settings(changes, path)
     elif source == "telegram":
         save_settings({"SIGNAL_TELEGRAM": "on" if on else "off"}, path)
     else:
@@ -225,23 +227,24 @@ def save_settings(changes, path=ENV_PATH):
     """Merge the form into .env, keeping comments. Raises ValueError with a message the page shows."""
     if not isinstance(changes, dict):
         raise ValueError("expected an object of settings")
-    values = read_env(path)
-    for key, value in changes.items():
-        if key not in DEFAULTS:
-            raise ValueError(f"unknown setting {key}")
-        value = str(value).strip()
-        if "\n" in value or "\r" in value:
-            raise ValueError(f"{key} must be one line")
-        if key in SECRETS and value in ("", "set"):
-            continue  # blank or untouched secret field keeps the stored one
-        values[key] = value
     from wizard import render_env  # here: wizard pulls in MetaTrader5
-    template = path.read_text(encoding="utf-8") if path.exists() else TEMPLATE_PATH.read_text(encoding="utf-8")
-    text = render_env(template, values)
-    missing = [key for key in values if not any(line.startswith(key + "=") for line in text.splitlines())]
-    text += "".join(f"{key}={values[key]}\n" for key in missing)
-    candidate = path.with_name(".env.check")
-    with SAVE_LOCK:  # a double-clicked Save must not validate or unlink the other request's file
+    # Read, merge, validate and write as one step: two quick saves must not drop each other's change.
+    with SAVE_LOCK:
+        values = read_env(path)
+        for key, value in changes.items():
+            if key not in DEFAULTS:
+                raise ValueError(f"unknown setting {key}")
+            value = str(value).strip()
+            if "\n" in value or "\r" in value:
+                raise ValueError(f"{key} must be one line")
+            if key in SECRETS and value in ("", "set"):
+                continue  # blank or untouched secret field keeps the stored one
+            values[key] = value
+        template = path.read_text(encoding="utf-8") if path.exists() else TEMPLATE_PATH.read_text(encoding="utf-8")
+        text = render_env(template, values)
+        missing = [key for key in values if not any(line.startswith(key + "=") for line in text.splitlines())]
+        text += "".join(f"{key}={values[key]}\n" for key in missing)
+        candidate = path.with_name(".env.check")
         candidate.write_text(text, encoding="utf-8")
         try:
             load_config(candidate)  # same validation the bot runs at start
@@ -260,7 +263,10 @@ class Handler(BaseHTTPRequestHandler):
         """Only this page may call the API: blocks other sites and DNS rebinding."""
         allowed = (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
         origin = self.headers.get("Origin")
-        return self.headers.get("Host") in allowed and (origin is None or origin.split("//")[-1] in allowed)
+        # A cross-site <img> or no-cors fetch sends no Origin, but browsers mark it in Sec-Fetch-Site.
+        site = self.headers.get("Sec-Fetch-Site")
+        return (self.headers.get("Host") in allowed and (origin is None or origin.split("//")[-1] in allowed)
+                and site in (None, "same-origin", "none"))
 
     def reply(self, status, body, kind="application/json"):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
@@ -274,7 +280,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.trusted():
             return self.reply(403, {"error": "forbidden"})
-        url = urlparse(self.path)
+        try:
+            self.route_get(urlparse(self.path))
+        except ValueError as error:  # e.g. ?days=abc
+            self.reply(400, {"error": str(error)})
+        except Exception as error:  # MT5, sqlite, disk: say what failed instead of dropping the connection
+            self.reply(500, {"error": f"{type(error).__name__}: {error}"})
+
+    def route_get(self, url):
         if url.path == "/":
             return self.reply(200, PAGE.read_bytes(), "text/html; charset=utf-8")
         if url.path == "/api/dashboard":
@@ -337,6 +350,8 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, action())
         except ValueError as error:
             self.reply(400, {"error": str(error)})
+        except Exception as error:  # e.g. the bot could not be started: show why
+            self.reply(500, {"error": f"{type(error).__name__}: {error}"})
 
 
 def open_window(url):

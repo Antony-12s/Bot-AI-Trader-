@@ -220,6 +220,19 @@ class CheckMarketTest(unittest.TestCase):
         self.assertEqual((place_order.call_args.args[0], place_order.call_args.args[4]), ("sell", "AI: weak"))
 
 
+class SingleInstanceTest(unittest.TestCase):
+    def test_a_second_bot_refuses_to_start(self):
+        with mock.patch.object(bot, "INSTANCE_PORT", 47822):
+            first = bot.single_instance()
+            try:
+                with self.assertRaises(SystemExit) as caught:
+                    bot.single_instance()
+                self.assertIn("already running", str(caught.exception))
+            finally:
+                first.close()
+            bot.single_instance().close()  # free again once the first one is gone
+
+
 class PaperTest(unittest.TestCase):
     """Dry mode: virtual positions filled from the live candles, recorded in the journal."""
 
@@ -264,9 +277,13 @@ class PaperTest(unittest.TestCase):
         self.assertIn("closed buy 0.01 XAUUSD @ 2645.5 by sl, profit -5.00", self.notices)
         self.assertEqual(self.journal.open_trades(), [])  # flat prices: no new cross, no re-entry
 
-    def run_signals(self, config, webhook_texts=()):
+    def run_signals(self, config, webhook_texts=(), now=None):
+        """webhook_texts: plain texts sent just now, or (text, sent_at) pairs."""
+        now = 1_000_000.0 if now is None else now
+        messages = [item if isinstance(item, tuple) else (item, now) for item in webhook_texts]
         rates = candles(FLAT)[:-1]  # closed candles only, as outside_signals asks for
-        with mock.patch.object(bot.signals, "poll", return_value=(list(webhook_texts), "cursor")) as poll, \
+        with mock.patch.object(bot.signals, "poll", return_value=(messages, "cursor")) as poll, \
+                mock.patch.object(bot.time, "time", return_value=now), \
                 mock.patch.object(bot.mt5, "copy_rates_from_pos", return_value=rates), \
                 mock.patch("builtins.print"), \
                 mock.patch.object(bot.mt5, "symbol_info_tick", return_value=TICK), \
@@ -303,6 +320,22 @@ class PaperTest(unittest.TestCase):
             bot.settle_paper(self.config, self.state, dict(entry_candle, time=TICK.time + CANDLE), GOLD)
         self.assertEqual(self.journal.closed_trades()[0]["outcome"], "sl")  # the next candle still counts
 
+    def test_signals_that_arrive_late_are_never_traded(self):
+        self.state.update(pending=[], webhook_since="0")
+        config = dict(self.config, SIGNAL_WEBHOOK="on", WEBHOOK_TOPIC="t" * 24)
+        self.run_signals(config, [("buy", 1_000_000.0 - 3600)], now=1_000_000.0)  # sent while MT5 was down
+        self.assertEqual(self.journal.open_trades("paper"), [])
+        self.assertIn("too late", self.signal_rows()[0]["reason"])
+
+    def test_queued_telegram_signal_expires_while_mt5_is_down(self):
+        config = dict(self.config, SIGNAL_TELEGRAM="on")
+        self.state["pending"] = []
+        with mock.patch.object(bot.time, "time", return_value=1_000_000.0):
+            bot.handle_command("/sell", config, self.state)
+        self.run_signals(config, now=1_000_000.0 + 3600)  # MT5 came back an hour later
+        self.assertEqual(self.journal.open_trades("paper"), [])
+        self.assertIn("too late", self.signal_rows()[0]["reason"])
+
     def test_webhook_off_is_never_polled(self):
         self.state.update(pending=[], webhook_since="0")
         self.run_signals(self.config).assert_not_called()
@@ -312,8 +345,9 @@ class PaperTest(unittest.TestCase):
         self.assertIn("off", bot.handle_command("/buy", self.config, self.state))
         self.assertEqual(self.state["pending"], [])
         config = dict(self.config, SIGNAL_TELEGRAM="on")
-        self.assertIn("queued", bot.handle_command("/buy", config, self.state))
-        self.run_signals(config)
+        with mock.patch.object(bot.time, "time", return_value=1_000_000.0):
+            self.assertIn("queued", bot.handle_command("/buy", config, self.state))
+        self.run_signals(config, now=1_000_000.0 + 5)
         (trade,) = self.journal.open_trades("paper")
         self.assertEqual((trade["side"], trade["brain"]), ("buy", "telegram"))
         self.assertIn("buy signal from telegram: traded", self.notices)

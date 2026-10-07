@@ -1,3 +1,4 @@
+import json
 import tempfile
 import threading
 import time
@@ -151,6 +152,16 @@ class AgentsTest(unittest.TestCase):
         self.assertFalse(cards["rsi_reversion"]["armed"])
         self.assertEqual(cards["trend_pullback"]["totals"]["trades"], 0)
 
+    def test_quick_arms_from_two_requests_both_stick(self):
+        names = ["rsi_reversion", "bollinger_breakout", "mr_zscore"]
+        threads = [threading.Thread(target=ui.arm, args=(name, True, self.env)) for name in names]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        armed = ui.read_env(self.env)["STRATEGY"]
+        self.assertTrue(all(name in armed or armed == "all" for name in names), armed)
+
     def test_arm_and_disarm_rewrite_strategy_in_registry_order(self):
         ui.arm("rsi_reversion", True, self.env)
         self.assertEqual(ui.read_env(self.env)["STRATEGY"], "ma_cross,trend_pullback,rsi_reversion")
@@ -226,6 +237,27 @@ class TrustTest(unittest.TestCase):
         self.assertTrue(self.trusted({"Host": "localhost:8765", "Origin": "http://localhost:8765"}))
         self.assertFalse(self.trusted({"Host": "127.0.0.1:8765", "Origin": "https://evil.example"}))
         self.assertFalse(self.trusted({"Host": "evil.example:8765"}))
+
+    def test_cross_site_requests_without_origin_are_refused(self):
+        # an <img src="http://127.0.0.1:8765/api/broker"> on another site: no Origin, but Sec-Fetch-Site says so
+        self.assertFalse(self.trusted({"Host": "127.0.0.1:8765", "Sec-Fetch-Site": "cross-site"}))
+        self.assertTrue(self.trusted({"Host": "127.0.0.1:8765", "Sec-Fetch-Site": "same-origin"}))
+        self.assertTrue(self.trusted({"Host": "127.0.0.1:8765", "Sec-Fetch-Site": "none"}))  # typed in the address bar
+
+
+class ServerTest(unittest.TestCase):
+    def test_bad_input_gets_a_message_not_a_dropped_connection(self):
+        import urllib.error
+        import urllib.request
+        server = ui.ThreadingHTTPServer(("127.0.0.1", 0), ui.Handler)
+        port = server.server_address[1]
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        with mock.patch.object(ui, "PORT", port):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/api/dashboard?days=abc", timeout=5)
+        self.assertEqual(caught.exception.code, 400)
+        self.assertIn("error", json.loads(caught.exception.read()))
 
 
 if __name__ == "__main__":

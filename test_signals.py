@@ -18,10 +18,21 @@ class ParseTest(unittest.TestCase):
             self.assertIsNone(side)
             self.assertTrue(why)
 
+    def test_exit_wording_never_opens_a_trade(self):
+        for text in ("close long", "Exit short", '{"action": "sell", "comment": "exit long"}', "flat"):
+            side, why = signals.parse(text)
+            self.assertIsNone(side, text)
+            self.assertIn("exit", why)
+
+    def test_old_signals_are_too_late(self):
+        self.assertIsNone(signals.too_old(1000, 1000 + signals.MAX_AGE_SECONDS))
+        self.assertIn("too late", signals.too_old(1000, 1000 + signals.MAX_AGE_SECONDS + 1))
+
 
 class PollTest(unittest.TestCase):
     def test_returns_messages_and_advances_the_cursor(self):
-        lines = [{"event": "open"}, {"event": "message", "id": "a1", "message": "buy"}, {"event": "message", "id": "b2", "message": "sell"}]
+        lines = [{"event": "open"}, {"event": "message", "id": "a1", "time": 100, "message": "buy"},
+                 {"event": "message", "id": "b2", "time": 101, "message": "sell"}]
         seen = []
 
         def opener(url, timeout):
@@ -29,7 +40,7 @@ class PollTest(unittest.TestCase):
             return io.BytesIO("\n".join(json.dumps(line) for line in lines).encode())
 
         texts, cursor = signals.poll("t", "123", opener)
-        self.assertEqual((texts, cursor), (["buy", "sell"], "b2"))
+        self.assertEqual((texts, cursor), ([("buy", 100), ("sell", 101)], "b2"))
         self.assertIn("/t/json?poll=1&since=123", seen[0])
 
     def test_keeps_the_cursor_when_nothing_arrived(self):
