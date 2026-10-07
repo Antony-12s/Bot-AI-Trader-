@@ -58,6 +58,39 @@ class BrokerTest(unittest.TestCase):
         self.patched(symbols_get=[SimpleNamespace(name=name) for name in names])
         self.assertEqual(broker.symbols(), ["GOLD", "XAUUSDm", "BarrickGold", "AUDUSD", "EURUSD"])
 
+    def test_install_downloads_the_official_setup_then_opens_it(self):
+        import io, os, tempfile, time
+        seen, launched = [], []
+
+        def opener(url, timeout):
+            seen.append(url)
+            return io.BytesIO(b"MZ fake installer")
+
+        broker.install.update(state="idle", error="")
+        broker.start_install(opener, launched.append)
+        for _ in range(100):
+            if broker.install["state"] != "downloading":
+                break
+            time.sleep(0.01)
+        self.assertEqual(seen, [broker.MT5_SETUP_URL])
+        self.assertTrue(broker.MT5_SETUP_URL.startswith("https://download.mql5.com/"))
+        self.assertEqual(launched, [os.path.join(tempfile.gettempdir(), "mt5setup.exe")])
+        self.assertEqual(broker.install["state"], "launched")
+
+    def test_failed_download_is_reported_not_raised(self):
+        import time
+
+        def opener(url, timeout):
+            raise OSError("no internet")
+
+        broker.install.update(state="idle", error="")
+        broker.start_install(opener, lambda path: None)
+        for _ in range(100):
+            if broker.install["state"] != "downloading":
+                break
+            time.sleep(0.01)
+        self.assertEqual((broker.install["state"], broker.install["error"]), ("failed", "no internet"))
+
     def test_dashboard_refuses_to_switch_accounts_under_a_running_bot(self):
         mocks = self.patched()
         with mock.patch.object(ui, "bot_running", return_value=True), self.assertRaises(ValueError):

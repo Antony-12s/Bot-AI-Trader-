@@ -91,6 +91,16 @@ code { background: var(--bg); padding: 1px 6px; border-radius: 6px; color: var(-
 .kv span { color: var(--muted); }
 .sym { background: var(--panel2); border-radius: 10px; padding: 9px 12px; cursor: pointer; }
 .sym.on { color: var(--accent); outline: 1px solid var(--accent); }
+.steps { display: flex; flex-direction: column; gap: 12px; max-width: 760px; }
+.step { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px 20px; }
+.step.now { border-color: var(--accent); }
+.step-head { display: flex; align-items: center; gap: 14px; }
+.step-head i { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-weight: 800; background: var(--panel2); color: var(--muted); flex: none; }
+.step.done .step-head i { background: #0f2a1a; color: var(--win); }
+.step.now .step-head i { background: var(--accent); color: #1a0d00; }
+.step-body { margin: 12px 0 0 44px; }
+.step-body .field { margin-bottom: 10px; max-width: 420px; }
+.picks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .settings-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .settings { display: grid; grid-template-columns: 240px 1fr; gap: 18px; align-items: start; }
 .subnav { display: flex; flex-direction: column; gap: 4px; }
@@ -133,6 +143,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <div class="group">• BROKER</div>
   <a href="#broker" data-page="broker">MetaTrader 5 <span id="navacct"></span></a>
   <div class="group">• APP</div>
+  <a href="#setup" data-page="setup">Setup <span id="navsetup"></span></a>
   <a href="#settings" data-page="settings">Settings</a>
   <div class="counter">
     <div class="label">Trades today</div>
@@ -202,6 +213,11 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
       <div class="card" id="agent"></div>
       <div class="card"><div class="label" style="color: var(--accent)">• Decisions</div><div class="feed" id="agentfeed"></div></div>
     </div>
+  </section>
+
+  <section id="setup" hidden>
+    <div class="sub" style="margin: -8px 0 14px">Five steps, once. Each turns green when it is done; you can change all of it later.</div>
+    <div class="steps" id="steps"></div>
   </section>
 
   <section id="broker" hidden>
@@ -603,7 +619,81 @@ $("loginform").addEventListener("submit", async (event) => {
   } catch (error) { $("loginmsg").textContent = error.message; $("loginmsg").className = "msg loss"; }
 });
 
-const PAGES = { dashboard: "Dashboard", history: "History", signals: "Signals", agents: "AI Agents", broker: "MetaTrader 5", settings: "Settings" };
+// --- Setup: the first-run checklist, also reachable any time from the sidebar ---
+async function setupState() {
+  const [acct, settings, bot] = await Promise.all([api("/api/broker"), api("/api/settings"), api("/api/bot")]);
+  if (acct.logged_in && !symbolNames) symbolNames = await api("/api/broker/symbols");
+  const symbolOk = acct.logged_in && symbolNames.includes(settings.SYMBOL);
+  return { acct, settings, bot, symbolOk, ready: acct.logged_in && symbolOk && bot.configured };
+}
+
+async function loadSetup() {
+  const { acct, settings, bot, symbolOk } = await setupState();
+  const install = acct.install || {};
+  const steps = [
+    ["Install MetaTrader 5", acct.connected || acct.installed, `
+      <div class="sub">TradeBot trades through MetaTrader 5, the free terminal most brokers use.</div>
+      ${install.state === "downloading" ? `<p>Downloading the official installer from MetaQuotes…</p>`
+        : install.state === "launched" ? `<p>The MetaTrader 5 installer is open: click through it, let MT5 start, then press Check again.</p>
+            <button class="ghost" data-act="recheck">Check again</button>`
+        : `${install.state === "failed" ? `<p class="loss">Download failed: ${esc(install.error)}</p>` : ""}
+          <div class="picks"><button class="save" data-act="install">Download and install MetaTrader 5</button>
+          <button class="ghost" data-act="recheck">I installed it already</button></div>
+          <div class="sub" style="margin-top: 8px">Official installer from MetaQuotes (about 23 MB). Your broker's own MT5 works too.</div>`}`],
+    ["Log in to your broker account", acct.logged_in, `
+      <div class="sub">Use the account and server from your broker's sign-up email. Your password goes straight to MT5; TradeBot never stores it.</div>
+      <form id="setuplogin" autocomplete="off" style="margin-top: 10px">
+        <div class="field"><label>Account number</label><input name="login" inputmode="numeric" required></div>
+        <div class="field"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
+        <div class="field"><label>Server</label><input name="server" required placeholder="e.g. XMGlobal-MT5 6"></div>
+        <button class="save" type="submit">Log in</button> <span class="msg" id="setupmsg"></span>
+        <div class="sub" style="margin-top: 8px">No account yet? Open a free demo account in MetaTrader 5: File → Open an Account.</div>
+      </form>`],
+    ["Choose how it trades", bot.configured, `
+      <div class="sub">Start on Paper: the bot trades on paper with live prices and sends nothing to the broker. Move to Demo, then Live, once you trust its record.</div>
+      <div class="picks">${[["dry", "Paper (start here)"], ["demo", "Demo account"], ["live", "Live, real money"]].map(([value, label]) =>
+        `<button class="${settings.MODE === value && bot.configured ? "save" : "ghost"}" data-mode="${value}">${label}</button>`).join("")}</div>`],
+    ["Pick what to trade", symbolOk, `
+      <div class="sub">Now set: <b>${esc(settings.SYMBOL)}</b>${acct.logged_in && !symbolOk ? " — your broker has no symbol with that name." : ""} Pick one your broker offers:</div>
+      <div class="picks">${(symbolNames || []).slice(0, 8).map((name) => `<button class="ghost" data-sym="${esc(name)}">${esc(name)}</button>`).join("")}</div>
+      <div class="sub" style="margin-top: 8px">Others: search them on the <a href="#broker" style="color: var(--accent)">MetaTrader 5</a> page.</div>`],
+    ["Start the bot", bot.running, `
+      <div class="sub">It checks the market on every new candle and follows the risk limits in Settings. Stop it any time.</div>
+      <button class="save" data-act="start" style="margin-top: 10px">Start the bot</button>`],
+  ];
+  const current = steps.findIndex(([, done]) => !done);
+  $("steps").innerHTML = steps.map(([title, done, body], i) => `
+    <div class="step ${done ? "done" : ""} ${i === current ? "now" : ""}">
+      <div class="step-head"><i>${done ? "✓" : i + 1}</i><b>${title}</b></div>
+      ${i === current ? `<div class="step-body">${body}</div>` : ""}</div>`).join("")
+    + (current < 0 ? `<div class="step done"><div class="step-head"><i>✓</i><b>All set. Watch it on the <a href="#dashboard" style="color: var(--accent)">Dashboard</a>.</b></div></div>` : "");
+  if (install.state === "downloading") setTimeout(() => location.hash === "#setup" && loadSetup(), 2000);
+}
+
+$("steps").addEventListener("click", async (event) => {
+  const target = event.target;
+  try {
+    if (target.dataset.act === "install") await api("/api/broker/install", {});
+    else if (target.dataset.act === "start") await api("/api/bot/start", {});
+    else if (target.dataset.sym) showMode(await api("/api/settings", { SYMBOL: target.dataset.sym }));
+    else if (target.dataset.mode) {
+      if (target.dataset.mode === "live" && !confirm("Live sends orders on any account, real money included. Choose Live?")) return;
+      const settings = await api("/api/settings", { MODE: target.dataset.mode });
+      showMode(settings); buildForm(settings);
+    } else if (target.dataset.act !== "recheck") return;
+  } catch (error) { alert(error.message); }
+  loadSetup(); loadBot(); loadBroker().catch(() => {});
+});
+$("steps").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = Object.fromEntries(new FormData(event.target));
+  event.target.password.value = "";
+  $("setupmsg").textContent = "Logging in…";
+  try { await api("/api/broker/login", form); symbolNames = null; loadSetup(); loadBroker().catch(() => {}); }
+  catch (error) { $("setupmsg").textContent = error.message; $("setupmsg").className = "msg loss"; }
+});
+
+const PAGES = { dashboard: "Dashboard", history: "History", signals: "Signals", agents: "AI Agents", broker: "MetaTrader 5", setup: "Setup", settings: "Settings" };
 function route() {
   const page = location.hash.slice(1) in PAGES ? location.hash.slice(1) : "dashboard";
   for (const id in PAGES) $(id).hidden = id !== page;
@@ -613,6 +703,7 @@ function route() {
   if (page === "agents") loadAgents();
   if (page === "signals") loadSignals();
   if (page === "broker") { loadBroker(); loadSymbols(); }
+  if (page === "setup") loadSetup();
 }
 addEventListener("hashchange", route);
 
@@ -622,6 +713,10 @@ addEventListener("hashchange", route);
   showMode(settings); buildForm(settings);
   await Promise.all([loadDashboard(), loadBot()]);
   loadBroker().catch(() => {});  // MT5 may be slow to start; the rest of the page does not wait for it
+  setupState().then(({ ready }) => {  // first run: open Setup unless the user asked for a page
+    $("navsetup").innerHTML = ready ? "" : `<span class="pill real">TODO</span>`;
+    if (!ready && !location.hash) location.hash = "#setup";
+  }).catch(() => {});
   setInterval(loadDashboard, 15000);
   setInterval(() => loadBroker().catch(() => {}), 15000);
   setInterval(loadBot, 3000);

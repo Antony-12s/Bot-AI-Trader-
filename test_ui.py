@@ -203,6 +203,20 @@ class SignalsPageTest(unittest.TestCase):
         self.assertIsNone(__import__("signals").parse("test ping")[0])  # a running bot will not trade it
 
 
+class WindowTest(unittest.TestCase):
+    def test_no_webview2_falls_back_to_the_browser(self):
+        broken = SimpleNamespace(create_window=mock.Mock(side_effect=RuntimeError("WebView2 runtime missing")))
+        with mock.patch.dict("sys.modules", webview=broken), mock.patch("builtins.print"), \
+                mock.patch.object(ui.sys, "platform", "linux"):
+            self.assertFalse(ui.open_window("http://127.0.0.1:1"))
+
+    def test_window_is_pinned_to_webview2(self):
+        fake = SimpleNamespace(create_window=mock.Mock(), start=mock.Mock())
+        with mock.patch.dict("sys.modules", webview=fake), mock.patch.object(ui.sys, "platform", "linux"):
+            self.assertTrue(ui.open_window("http://127.0.0.1:1"))
+        self.assertEqual(fake.start.call_args.kwargs["gui"], "edgechromium")
+
+
 class TrustTest(unittest.TestCase):
     def trusted(self, headers):
         return ui.Handler.trusted(SimpleNamespace(headers=headers))

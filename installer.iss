@@ -29,10 +29,11 @@ Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 ; The app window is the main entry; Start / Stop live in it. ui.py hides its console.
 Name: "{autoprograms}\TradeBot\TradeBot"; Filename: "{app}\TradeBot.exe"; Parameters: "ui.py"; WorkingDir: "{app}"
-Name: "{autoprograms}\TradeBot\Start bot (console)"; Filename: "{app}\start.bat"; WorkingDir: "{app}"
-Name: "{autoprograms}\TradeBot\Setup wizard"; Filename: "{app}\settings.bat"; WorkingDir: "{app}"
-Name: "{autoprograms}\TradeBot\Train AI"; Filename: "{app}\train.bat"; WorkingDir: "{app}"
-Name: "{autoprograms}\TradeBot\Run forever (VPS)"; Filename: "{app}\run_forever.bat"; WorkingDir: "{app}"
+; Console tools for power users, out of the way of everyone else.
+Name: "{autoprograms}\TradeBot\Advanced\Start bot (console)"; Filename: "{app}\start.bat"; WorkingDir: "{app}"
+Name: "{autoprograms}\TradeBot\Advanced\Setup wizard (console)"; Filename: "{app}\settings.bat"; WorkingDir: "{app}"
+Name: "{autoprograms}\TradeBot\Advanced\Train AI"; Filename: "{app}\train.bat"; WorkingDir: "{app}"
+Name: "{autoprograms}\TradeBot\Advanced\Run forever (VPS)"; Filename: "{app}\run_forever.bat"; WorkingDir: "{app}"
 Name: "{autoprograms}\TradeBot\Uninstall TradeBot"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\TradeBot"; Filename: "{app}\TradeBot.exe"; Parameters: "ui.py"; WorkingDir: "{app}"; Tasks: desktopicon
 

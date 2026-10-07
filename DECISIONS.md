@@ -166,3 +166,15 @@
   - สัญญาณบอกแค่ buy/sell, lot/SL/TP/กฎความเสี่ยงยังเป็นของบอททั้งหมด (current_block ตัวเดียวกับ strategies)
   - สัญญาณที่ส่งมาตอนบอทปิดจะถูกข้าม ไม่เทรดย้อนหลัง
   - Telegram /buy /sell ใช้บอท Telegram ของเราเอง ไม่ล็อกอินด้วยเบอร์แบบ AutoBotSignal
+
+## 2026-10-07 แอปใช้งานเดี่ยวได้ (standalone) + หน้า Setup
+
+- ไม่ยัดไฟล์ MT5 ลงในตัวติดตั้ง: MT5 เป็นของ MetaQuotes การแจกต่อเองเสี่ยงผิด license
+  - แทนด้วยปุ่มเดียวในหน้า Setup: ดาวน์โหลดตัวติดตั้งทางการจาก download.mql5.com แล้วเปิดให้กด
+  - MT5 ของโบรกเกอร์ไหนก็ใช้ได้ (หาจาก uninstall list ใน registry)
+- หน้า Setup 5 ขั้น: MT5 → ล็อกอิน → โหมด → symbol → Start, เปิดเองตอนตั้งค่ายังไม่ครบ
+  - โหมดมาก่อน symbol: การเลือก symbol สร้าง .env ซึ่งจะทำให้ขั้นโหมดถูกติ๊กเองถ้าอยู่หลัง
+- รหัสผ่านโบรกเกอร์ส่งตรงเข้า mt5.login ไม่เก็บไม่ log, ห้ามสลับบัญชีตอนบอทรัน
+- pywebview ถูกบังคับใช้ WebView2 (gui=edgechromium) ถ้าไม่มีให้เปิดเบราว์เซอร์แทน ไม่ถอยไปใช้ IE engine
+- build_installer.bat ล้าง PYTHONPATH และตรวจว่า MetaTrader5 ตัวจริง (_core.pyd) อยู่ในตัวแพ็ก
+  - เคยหลุด: PYTHONPATH=tests_support ทำให้ installer รุ่น 13:33 แพ็ก MT5 ตัวปลอมไป เทรดไม่ได้เลย

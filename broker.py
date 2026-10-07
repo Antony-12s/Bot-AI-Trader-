@@ -3,13 +3,64 @@
 The password goes straight to the terminal (mt5.login) and is never stored, logged or sent
 back here; the terminal keeps the account the same way as a login typed in its own window.
 """
+import os
+import tempfile
 import threading
+import urllib.request
+from pathlib import Path
 
 import MetaTrader5 as mt5
 
 from wizard import gold_like
 
 LOCK = threading.Lock()  # one terminal connection per process, the HTTP server is threaded
+# MetaQuotes' own installer, fetched when the user asks: TradeBot does not redistribute MT5 itself.
+MT5_SETUP_URL = "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe"
+install = {"state": "idle", "error": ""}  # idle | downloading | launched | failed
+
+
+def installed_terminals():
+    """terminal64.exe of every MT5 the Windows uninstall list knows (any broker's build)."""
+    try:
+        import winreg
+    except ImportError:  # not Windows
+        return []
+    found = []
+    for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            uninstall = winreg.OpenKey(root, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")
+        except OSError:
+            continue
+        for index in range(winreg.QueryInfoKey(uninstall)[0]):
+            try:
+                entry = winreg.OpenKey(uninstall, winreg.EnumKey(uninstall, index))
+                location = winreg.QueryValueEx(entry, "InstallLocation")[0]
+            except OSError:
+                continue
+            terminal = Path(location) / "terminal64.exe"
+            if location and terminal.exists() and str(terminal) not in found:
+                found.append(str(terminal))
+    return found
+
+
+def start_install(opener=urllib.request.urlopen, launch=None):
+    """Download the official MT5 installer in the background, then open it for the user to click through."""
+    launch = launch or os.startfile  # Windows only, looked up here so the module imports anywhere
+    if install["state"] == "downloading":
+        return
+
+    def work():
+        try:
+            target = Path(tempfile.gettempdir(), "mt5setup.exe")
+            with opener(MT5_SETUP_URL, timeout=120) as response:
+                target.write_bytes(response.read())
+            launch(str(target))
+            install.update(state="launched", error="")
+        except Exception as error:  # shown on the Setup page, never fatal for the dashboard
+            install.update(state="failed", error=str(error))
+
+    install.update(state="downloading", error="")
+    threading.Thread(target=work, daemon=True).start()
 
 
 def _error(prefix):
@@ -23,11 +74,12 @@ def _attach():
 
 
 def status():
+    extra = {"installed": bool(installed_terminals()), "install": dict(install)}
     with LOCK:
         if not _attach():
-            return {"connected": False, "error": _error("cannot reach the MT5 terminal (is it installed?)")}
+            return dict(extra, connected=False, logged_in=False, error=_error("cannot reach the MT5 terminal"))
         terminal, account = mt5.terminal_info(), mt5.account_info()
-    info = {"connected": True, "online": bool(terminal and terminal.connected), "logged_in": account is not None}
+    info = dict(extra, connected=True, online=bool(terminal and terminal.connected), logged_in=account is not None)
     if account is not None:
         info.update(
             login=account.login, server=account.server, name=account.name, company=account.company,

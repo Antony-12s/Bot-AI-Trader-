@@ -19,7 +19,7 @@ from config import ALIVE, APP_DIR, DEFAULTS, ENV_PATH, JOURNAL_PATH, STOP_FLAG, 
 from journal import Journal, summarize
 from risk import SECONDS_PER_DAY, day_start
 
-PORT = 8765
+PORT = int(os.environ.get("TRADEBOT_PORT", "8765"))  # change it if another program already uses 8765
 PAGE = Path(__file__).with_name("ui.html")
 TEMPLATE_PATH = ENV_PATH.with_name(".env.example")
 LOG_PATH = APP_DIR / "bot.log"
@@ -67,7 +67,8 @@ def bot_status(lines=40):
         log = LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
     except FileNotFoundError:
         log = []
-    return {"running": bot_running(), "stopping": STOP_FLAG.exists() and bot_running(), "log": log}
+    return {"running": bot_running(), "stopping": STOP_FLAG.exists() and bot_running(), "log": log,
+            "configured": ENV_PATH.exists()}  # the Setup page's "settings saved" step
 
 
 def history(journal, limit=200):
@@ -324,6 +325,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/signals/rotate": lambda: (rotate_topic(), public_settings())[1],
             "/api/signals/ping": lambda: (ping_webhook(), {"sent": True})[1],
             "/api/broker/login": lambda: broker_login(body),  # the password is not stored or logged
+            "/api/broker/install": lambda: (__import__("broker").start_install(), {"started": True})[1],
         }
         action = actions.get(urlparse(self.path).path)
         if action is None:
@@ -338,18 +340,22 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def open_window(url):
-    """Own app window (WebView2 through pywebview); False when pywebview is missing."""
+    """Own app window (WebView2 through pywebview); False when it cannot open, so the caller uses a browser."""
+    import ctypes
     try:
         import webview
-    except ImportError:
+        window = webview.create_window("TradeBot", url, width=1360, height=860, min_size=(900, 600), background_color="#0b1019")
+        if sys.platform == "win32":  # the console behind the window has nothing to show
+            ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+        # A shortcut's minimized/hidden start applies to the first window shown: bring this one up regardless.
+        # gui pinned to WebView2: without it pywebview may fall back to the old IE engine, which breaks the page.
+        webview.start(lambda: (window.restore(), window.show()), gui="edgechromium")  # blocks until closed
+        return True
+    except Exception as error:  # no pywebview or no WebView2 runtime (older Windows 10): use the browser
+        print("app window unavailable, opening the browser instead:", error)
+        if sys.platform == "win32":
+            ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 5)  # show the console again
         return False
-    window = webview.create_window("TradeBot", url, width=1360, height=860, min_size=(900, 600), background_color="#0b1019")
-    if sys.platform == "win32":  # the console behind the window has nothing to show
-        import ctypes
-        ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
-    # A shortcut's minimized/hidden start applies to the first window shown: bring this one up regardless.
-    webview.start(lambda: (window.restore(), window.show()))  # blocks until closed; a bot started here keeps running
-    return True
 
 
 def main():
