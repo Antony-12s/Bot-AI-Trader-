@@ -1,4 +1,4 @@
-﻿; Inno Setup script for TradeBot-Setup.exe. Build it with build_installer.bat, not by hand.
+; Inno Setup script for TradeBot-Setup.exe. Build it with build_installer.bat, not by hand.
 ; Per-user install, no admin: the bot writes .env, journal.db and stop.flag next to itself,
 ; which Program Files would refuse.
 
@@ -14,6 +14,7 @@ OutputDir=dist
 OutputBaseFilename=TradeBot-Setup
 Compression=lzma2
 SolidCompression=yes
+SetupIconFile=tradebot.ico
 UninstallDisplayIcon={app}\TradeBot.exe
 
 [Tasks]
