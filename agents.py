@@ -111,12 +111,31 @@ def clean(raw):
 
 
 def rsi_range(text):
-    """(low, high) when the strategy says "RSI between A and B" (or "RSI is 45-65"); else None."""
+    """(low, high) when the text says "RSI between A and B" (or "RSI is 45-65"); else None."""
     match = re.search(r"rsi[^.\d]{0,20}?(\d+(?:\.\d+)?)\s*(?:and|to|-|–)\s*(\d+(?:\.\d+)?)", text.lower())
     if not match:
         return None
     low, high = sorted((float(match.group(1)), float(match.group(2))))
     return (low, high) if 0 <= low < high <= 100 else None
+
+
+def rsi_ranges(text):
+    """{"buy": range or None, "sell": range or None}, sentence by sentence.
+
+    "Buy when ... RSI between 40 and 65. Sell on the mirror image." limits buys only: a range in a
+    sentence about buying (or selling) binds that side; a sentence naming neither binds both.
+    """
+    ranges = {"buy": None, "sell": None}
+    for sentence in re.split(r"(?<=[.!?;])\s+|\n", text):
+        band = rsi_range(sentence)
+        if not band:
+            continue
+        words = set(re.findall(r"[a-z]+", sentence.lower()))
+        sides = [side for side, names in (("buy", {"buy", "buys", "long", "longs"}), ("sell", {"sell", "sells", "short", "shorts"}))
+                 if words & names] or ["buy", "sell"]
+        for side in sides:
+            ranges[side] = ranges[side] or band
+    return ranges
 
 
 def decide(agent, candles, config, journal_spent=0.0):
@@ -148,8 +167,8 @@ def decide(agent, candles, config, journal_spent=0.0):
         reason = "AI: " + str(answer["reason"]).strip()
     if signal and confidence < agent["min_confidence"]:
         return None, confidence, f"{reason} (held: confidence {confidence} under {agent['min_confidence']})", cost
-    band = rsi_range(agent["strategy"])
-    if signal and band:
+    band = rsi_ranges(agent["strategy"])[signal] if signal else None
+    if band:
         rsi = indicators.rsi([candle["close"] for candle in candles])
         if rsi and not band[0] <= rsi[-1] <= band[1]:
             return None, confidence, f"{reason} (held: RSI {rsi[-1]:.0f} outside your {band[0]:g}-{band[1]:g})", cost

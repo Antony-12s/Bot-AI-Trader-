@@ -238,6 +238,37 @@ class ChartTest(unittest.TestCase):
         self.assertIn("Apache License", ui.VENDOR.joinpath("lightweight-charts.LICENSE").read_text(encoding="utf-8"))
 
 
+class MyAgentsTest(unittest.TestCase):
+    def test_save_edit_mode_and_delete(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, "agents.json")
+            raw = {"name": "Gold dip", "template": "trend_pullback", "markets": ["GOLD"], "mode": "watch", "analyst": "rules"}
+            agent = ui.save_agent(raw, path)
+            ui.save_agent(dict(agent, name="Gold dip 2"), path)  # same id: an edit, not a second agent
+            self.assertEqual([a["name"] for a in __import__("agents").load(path)], ["Gold dip 2"])
+            self.assertEqual(ui.set_agent_mode(agent["id"], "auto", path)["mode"], "auto")
+            with self.assertRaises(ValueError):
+                ui.set_agent_mode(agent["id"], "yolo", path)
+            with self.assertRaises(ValueError):
+                ui.save_agent(dict(raw, markets=[]), path)
+            ui.delete_agent(agent["id"], path)
+            self.assertEqual(__import__("agents").load(path), [])
+
+    def test_cards_carry_each_agents_own_record(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, "agents.json")
+            agent = ui.save_agent({"name": "A", "template": "ma_cross", "markets": ["GOLD"], "analyst": "rules"}, path)
+            journal = Journal()
+            position = {"side": "buy", "lot": 0.01, "entry": 1, "sl": 0.9, "tp": 1.1, "opened_at": 1}
+            mine = journal.open_trade("paper", "r", "GOLD", position, brain="agent:" + agent["id"])
+            journal.close_trade(mine, 1.1, 2, 3.0, "tp")
+            journal.close_trade(journal.open_trade("paper", "r", "GOLD", position, brain="rules"), 0.9, 2, -1.0, "sl")
+            journal.record_decision("agent:" + agent["id"], "r", "agent", 5, "buy", "GOLD · 100% · ma_cross: x")
+            (card,) = ui.my_agents(journal, path)
+        self.assertEqual((card["totals"]["trades"], card["totals"]["net"]), (1, 3.0))
+        self.assertEqual(len(card["decisions"]), 1)
+
+
 class TelegramTestTest(unittest.TestCase):
     def test_checks_token_and_chat_without_sending_anything(self):
         import io

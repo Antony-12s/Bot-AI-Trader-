@@ -51,6 +51,14 @@ class RsiRangeTest(unittest.TestCase):
         self.assertIsNone(agents.rsi_range("Buy when RSI drops below 30"))
         self.assertIsNone(agents.rsi_range("no indicator here"))
 
+    def test_a_range_binds_only_the_side_its_sentence_is_about(self):
+        template = ("Buy when the 50-candle average is rising, with RSI between 40 and 65. Sell on the mirror image.")
+        self.assertEqual(agents.rsi_ranges(template), {"buy": (40, 65), "sell": None})
+        both = "Only trade when RSI is between 30 and 70. Buy dips, sell rips."
+        self.assertEqual(agents.rsi_ranges(both), {"buy": (30, 70), "sell": (30, 70)})
+        split = "Buy when RSI is between 40 and 65; sell when RSI is between 35 and 60."
+        self.assertEqual(agents.rsi_ranges(split), {"buy": (40, 65), "sell": (35, 60)})
+
 
 class DecideTest(unittest.TestCase):
     config = dict(CONFIG, AI_PROVIDER="claude", AI_BUDGET_USD=5.0)

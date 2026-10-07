@@ -236,6 +236,47 @@ def test_ai_key(body, path=ENV_PATH):
     return {"models": ai_strategy.list_models(provider, key), "default": ai_strategy.DEFAULT_MODELS[provider]}
 
 
+def my_agents(journal, path=None):
+    """The AI agents page: every agent with its record and latest calls."""
+    import agents
+    cards = []
+    for agent in agents.load(path):
+        source = "agent:" + agent["id"]
+        trades = [t for t in journal.closed_trades() if t["brain"] == source]
+        calls = journal._rows("SELECT at, action, reason FROM decisions WHERE source = ? AND kind = 'agent'"
+                              " ORDER BY id DESC LIMIT 20", (source,))
+        cards.append(dict(agent, totals=summarize(trades), open=len([t for t in journal.open_trades() if t["brain"] == source]),
+                          decisions=calls))
+    return cards
+
+
+def save_agent(raw, path=None):
+    """Create or update one agent from the wizard; the bot picks it up on its next loop."""
+    import agents
+    with SAVE_LOCK:
+        agent = agents.clean(raw)
+        existing = agents.load(path)
+        replaced = [agent if a["id"] == agent["id"] else a for a in existing]
+        agents.store(replaced if any(a["id"] == agent["id"] for a in existing) else existing + [agent], path)
+    return agent
+
+
+def set_agent_mode(agent_id, mode, path=None):
+    """Watch / suggest / auto from the agents list, without opening the wizard."""
+    import agents
+    with SAVE_LOCK:
+        found = [a for a in agents.load(path) if a["id"] == agent_id]
+        if not found:
+            raise ValueError("no such agent")
+        return save_agent(dict(found[0], mode=mode), path)
+
+
+def delete_agent(agent_id, path=None):
+    import agents
+    with SAVE_LOCK:
+        agents.store([a for a in agents.load(path) if a["id"] != agent_id], path)
+
+
 def test_telegram(body, path=ENV_PATH, opener=urllib.request.urlopen):
     """Check the bot token (getMe) and that the bot can see the chat (getChat). Sends no message."""
     stored = read_env(path)
@@ -401,6 +442,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, signal_sources(journal))
             finally:
                 journal.close()
+        if url.path == "/api/myagents":
+            journal = Journal(JOURNAL_PATH)
+            try:
+                return self.reply(200, my_agents(journal))
+            finally:
+                journal.close()
         if url.path == "/api/agents":
             journal = Journal(JOURNAL_PATH)
             try:
@@ -446,6 +493,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/broker/login": lambda: broker_login(body),  # the password is not stored or logged
             "/api/ai/test": lambda: test_ai_key(body),  # the key is only sent to its own AI company
             "/api/telegram/test": lambda: test_telegram(body),
+            "/api/myagents/save": lambda: save_agent(body),
+            "/api/myagents/mode": lambda: set_agent_mode(body.get("id"), body.get("mode")),
+            "/api/myagents/delete": lambda: (delete_agent(body.get("id")), {"deleted": True})[1],
             "/api/app/show": lambda: (show_window and show_window(), {"shown": bool(show_window)})[1],
             "/api/broker/install": lambda: (__import__("broker").start_install(), {"started": True})[1],
             "/api/broker/mode": lambda: switch_mode(body.get("mode")),
