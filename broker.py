@@ -103,6 +103,22 @@ def login(account, password, server):
             raise ValueError(_error("login failed, check the account, password and server"))
 
 
+def candles(symbol, timeframe, count):
+    """The last `count` candles (the newest still forming) for the chart; times are broker server time."""
+    frame = getattr(mt5, "TIMEFRAME_" + timeframe, None)
+    if frame is None:
+        raise ValueError(f"unknown timeframe {timeframe}")
+    with LOCK:
+        if not _attach():
+            raise ValueError(_error("cannot reach the MT5 terminal"))
+        mt5.symbol_select(symbol, True)  # the chart may ask for a symbol not in Market Watch yet
+        rates = mt5.copy_rates_from_pos(symbol, frame, 0, count)
+    if rates is None or len(rates) == 0:
+        raise ValueError(f"no candles for {symbol} {timeframe}: is the symbol name right, and MT5 logged in?")
+    return [{"time": int(r["time"]), "open": float(r["open"]), "high": float(r["high"]),
+             "low": float(r["low"]), "close": float(r["close"])} for r in rates]
+
+
 def symbols():
     """Every symbol name the broker offers, the plainest gold names first: the dashboard's SYMBOL picker."""
     with LOCK:

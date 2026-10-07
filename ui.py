@@ -22,6 +22,7 @@ from risk import SECONDS_PER_DAY, day_start
 
 PORT = int(os.environ.get("TRADEBOT_PORT", "8765"))  # change it if another program already uses 8765
 PAGE = Path(__file__).with_name("ui.html")
+VENDOR = Path(__file__).with_name("vendor")  # third-party files shipped with the app (lightweight-charts, Apache-2.0)
 TEMPLATE_PATH = ENV_PATH.with_name(".env.example")
 LOG_PATH = APP_DIR / "bot.log"
 SECRETS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "TELEGRAM_TOKEN")  # never sent to the page, only "set" or not
@@ -200,6 +201,29 @@ def ping_webhook(path=ENV_PATH, opener=urllib.request.urlopen):
         raise ValueError(f"could not reach ntfy.sh: {error}") from None
 
 
+CHART_TIMEFRAMES = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400}
+
+
+def chart(journal, symbol, timeframe, count, candles_for):
+    """Candles plus the bot's entries and exits on them, and the open trade's entry / stop / target lines."""
+    if timeframe not in CHART_TIMEFRAMES:
+        raise ValueError(f"unknown timeframe {timeframe}")
+    bars = candles_for(symbol, timeframe, max(2, min(count, 2000)))
+    first, step = bars[0]["time"], CHART_TIMEFRAMES[timeframe]
+    snap = lambda t: t - (t - first) % step  # markers must sit on a candle's own time
+    trades = journal._rows("SELECT side, entry, sl, tp, exit, profit, opened_at, closed_at FROM trades WHERE symbol = ?"
+                           " AND COALESCE(closed_at, opened_at) >= ? ORDER BY opened_at", (symbol, first))
+    marks = []
+    for trade in trades:
+        if trade["opened_at"] >= first:
+            marks.append({"time": snap(trade["opened_at"]), "kind": "open", "side": trade["side"], "price": trade["entry"]})
+        if trade["closed_at"]:
+            marks.append({"time": snap(trade["closed_at"]), "kind": "close", "side": trade["side"], "profit": trade["profit"]})
+    open_trade = next((t for t in reversed(trades) if t["closed_at"] is None), None)
+    return {"symbol": symbol, "timeframe": timeframe, "candles": bars, "marks": sorted(marks, key=lambda m: m["time"]),
+            "open": open_trade and {k: open_trade[k] for k in ("side", "entry", "sl", "tp")}}
+
+
 def test_ai_key(body, path=ENV_PATH):
     """List the models a key can use: the key typed on the page, or the stored one when it is blank."""
     import ai_strategy
@@ -332,6 +356,18 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, public_settings())
         if url.path == "/api/bot":
             return self.reply(200, bot_status())
+        if url.path == "/vendor/lightweight-charts.js":  # bundled, so the chart works offline
+            return self.reply(200, VENDOR.joinpath("lightweight-charts.js").read_bytes(), "text/javascript; charset=utf-8")
+        if url.path == "/api/chart":
+            import broker
+            query = parse_qs(url.query)
+            settings = read_env()
+            journal = Journal(JOURNAL_PATH)
+            try:
+                return self.reply(200, chart(journal, settings["SYMBOL"], query.get("tf", [settings["TIMEFRAME"]])[0],
+                                             int(query.get("count", ["300"])[0]), broker.candles))
+            finally:
+                journal.close()
         if url.path == "/api/app":
             return self.reply(200, {"run_at_login": __import__("desktop").run_at_login()})
         if url.path in ("/api/broker", "/api/broker/symbols"):

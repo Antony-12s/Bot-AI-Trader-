@@ -15,7 +15,7 @@ rem MetaTrader5 imports numpy from C, which PyInstaller cannot see either.
 "%PY%" -m PyInstaller --noconfirm --clean --windowed --name TradeBot --icon tradebot.ico --hidden-import numpy ^
     --hidden-import bot --hidden-import wizard --hidden-import replay ^
     --hidden-import export_history --hidden-import report --hidden-import ui --hidden-import desktop ^
-    --add-data "ui.html;." --add-data "tradebot.ico;." launcher.py || goto :fail
+    --add-data "ui.html;." --add-data "tradebot.ico;." --add-data "vendor;vendor" launcher.py || goto :fail
 
 rem The real MetaTrader5 ships a compiled _core; the test stub does not. Never ship a bot that cannot trade.
 if not exist "dist\TradeBot\_internal\MetaTrader5\_core*.pyd" (

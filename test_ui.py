@@ -214,6 +214,30 @@ class SignalsPageTest(unittest.TestCase):
         self.assertIsNone(__import__("signals").parse("test ping")[0])  # a running bot will not trade it
 
 
+class ChartTest(unittest.TestCase):
+    def test_trades_land_on_candle_times_and_the_open_trade_gets_its_lines(self):
+        journal = Journal()
+        bars = [{"time": 900 * i, "open": 1, "high": 2, "low": 0.5, "close": 1.5} for i in range(10, 20)]
+        position = {"side": "buy", "lot": 0.01, "entry": 1.2, "sl": 1.0, "tp": 1.6}
+        closed = journal.open_trade("paper", "r", "GOLD", dict(position, opened_at=900 * 12 + 30))
+        journal.close_trade(closed, 1.6, 900 * 15 + 400, 4.0, "tp")
+        journal.open_trade("paper", "r", "GOLD", dict(position, side="sell", opened_at=900 * 18 + 5))
+        journal.open_trade("paper", "r", "EURUSD", dict(position, opened_at=900 * 13))  # another symbol: not on this chart
+        old = journal.open_trade("paper", "r", "GOLD", dict(position, opened_at=100))
+        journal.close_trade(old, 1.1, 200, -1.0, "sl")  # before the first candle: off the chart
+        data = ui.chart(journal, "GOLD", "M15", 10, lambda symbol, tf, count: bars)
+        self.assertEqual([(m["time"], m["kind"], m["side"]) for m in data["marks"]],
+                         [(900 * 12, "open", "buy"), (900 * 15, "close", "buy"), (900 * 18, "open", "sell")])
+        self.assertEqual(data["marks"][1]["profit"], 4.0)
+        self.assertEqual(data["open"], {"side": "sell", "entry": 1.2, "sl": 1.0, "tp": 1.6})
+        with self.assertRaises(ValueError):
+            ui.chart(journal, "GOLD", "M7", 10, lambda *a: bars)
+
+    def test_chart_library_ships_with_its_license(self):
+        self.assertTrue(ui.VENDOR.joinpath("lightweight-charts.js").exists())
+        self.assertIn("Apache License", ui.VENDOR.joinpath("lightweight-charts.LICENSE").read_text(encoding="utf-8"))
+
+
 class AiKeyTest(unittest.TestCase):
     def test_blank_key_on_the_page_tests_the_stored_one(self):
         with tempfile.TemporaryDirectory() as folder:

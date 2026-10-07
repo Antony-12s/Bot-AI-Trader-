@@ -148,6 +148,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <div class="brand"><img id="mark" alt="" width="26" height="26">TRADE<b>BOT</b></div>
   <div class="group">• TRADE</div>
   <a href="#dashboard" data-page="dashboard">Dashboard</a>
+  <a href="#price" data-page="price">Chart</a>
   <a href="#history" data-page="history">History</a>
   <a href="#signals" data-page="signals">Signals</a>
   <div class="group">• AUTOMATION</div>
@@ -192,6 +193,15 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
       <div class="card" style="flex: 0 1 360px"><b>Recent decisions</b><div class="feed" id="feed"></div></div>
     </div>
     <div class="card" style="margin-top: 14px"><b>Bot log</b> <span class="sub">output of the bot started here, newest at the bottom</span><pre id="log">Nothing yet. Press Start.</pre></div>
+  </section>
+
+  <section id="price" hidden>
+    <div class="chart-head" style="margin: -8px 0 12px">
+      <div class="sub" id="pricesub">Live candles from MetaTrader 5 with the bot's trades on them.</div>
+      <div class="seg" id="tfs"></div>
+    </div>
+    <div class="card" id="pricebox" style="height: calc(100vh - 230px); min-height: 420px; padding: 6px"></div>
+    <div class="sub" style="margin-top: 8px">▲ the bot bought · ▼ the bot sold · ● a trade closed, with its profit · lines: the open trade's entry, stop loss and take profit</div>
   </section>
 
   <section id="history" hidden>
@@ -789,7 +799,60 @@ $("steps").addEventListener("submit", async (event) => {
   catch (error) { $("setupmsg").textContent = error.message; $("setupmsg").className = "msg loss"; }
 });
 
-const PAGES = { dashboard: "Dashboard", history: "History", signals: "Signals", agents: "Strategies", broker: "MetaTrader 5", setup: "Setup", settings: "Settings" };
+// --- Chart: lightweight-charts (TradingView, Apache-2.0), loaded from the app itself on first use ---
+let priceChart = null, candleSeries = null, markerLayer = null, priceLines = [], chartTf = null, lastFull = 0;
+const loadChartLib = () => window.LightweightCharts ? Promise.resolve() : new Promise((done, fail) => {
+  const script = document.createElement("script");
+  script.src = "/vendor/lightweight-charts.js"; script.onload = done; script.onerror = () => fail(new Error("chart library missing"));
+  document.head.appendChild(script);
+});
+
+async function loadPrice(full = true) {
+  try {
+    await loadChartLib();
+    chartTf = chartTf || timeframeNow;
+    $("tfs").innerHTML = Object.keys({ M1: 1, M5: 1, M15: 1, M30: 1, H1: 1, H4: 1, D1: 1 }).map((t) =>
+      `<button data-tf="${t}" class="${t === chartTf ? "on" : ""}">${t}</button>`).join("");
+    const data = await api(`/api/chart?tf=${chartTf}&count=${full ? 400 : 3}`);
+    $("pricesub").textContent = `${data.symbol} · ${data.timeframe} candles from MetaTrader 5 (broker server time), with the bot's trades on them.`;
+    if (!priceChart) {
+      const L = window.LightweightCharts;
+      $("pricebox").innerHTML = "";
+      priceChart = L.createChart($("pricebox"), {
+        autoSize: true,
+        layout: { background: { color: "#131a26" }, textColor: "#8a93a6" },
+        grid: { vertLines: { color: "#1c2433" }, horzLines: { color: "#1c2433" } },
+        rightPriceScale: { borderColor: "#232c3b" }, timeScale: { borderColor: "#232c3b", timeVisible: true },
+      });
+      candleSeries = priceChart.addSeries(L.CandlestickSeries, {
+        upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444" });
+      markerLayer = L.createSeriesMarkers(candleSeries, []);
+    }
+    if (!full) { for (const candle of data.candles) candleSeries.update(candle); return; }
+    candleSeries.setData(data.candles);
+    markerLayer.setMarkers(data.marks.map((m) => m.kind === "open"
+      ? { time: m.time, position: m.side === "buy" ? "belowBar" : "aboveBar", shape: m.side === "buy" ? "arrowUp" : "arrowDown",
+          color: m.side === "buy" ? "#22c55e" : "#ef4444", text: m.side.toUpperCase() }
+      : { time: m.time, position: "inBar", shape: "circle", color: m.profit >= 0 ? "#22c55e" : "#ef4444", text: money(m.profit) }));
+    for (const line of priceLines) candleSeries.removePriceLine(line);
+    priceLines = data.open ? [["entry", data.open.entry, "#e6e9ef"], ["stop loss", data.open.sl, "#ef4444"], ["take profit", data.open.tp, "#22c55e"]]
+      .map(([title, price, color]) => candleSeries.createPriceLine({ price, color, title, lineWidth: 1, lineStyle: 2 })) : [];
+    lastFull = Date.now();
+  } catch (error) {
+    if (!priceChart) $("pricebox").innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+  }
+}
+
+$("tfs").addEventListener("click", (event) => {
+  if (!event.target.dataset.tf) return;
+  chartTf = event.target.dataset.tf;
+  loadPrice(true);
+});
+setInterval(() => {  // live: the forming candle every 3 s, everything (new trades) every 30 s
+  if (location.hash.startsWith("#price") && priceChart) loadPrice(Date.now() - lastFull > 30000);
+}, 3000);
+
+const PAGES = { dashboard: "Dashboard", price: "Chart", history: "History", signals: "Signals", agents: "Strategies", broker: "MetaTrader 5", setup: "Setup", settings: "Settings" };
 function route() {
   const [wanted, sub] = location.hash.slice(1).split("/");  // #settings/ai opens that Settings section
   const page = wanted in PAGES ? wanted : "dashboard";
@@ -802,6 +865,7 @@ function route() {
   for (const link of document.querySelectorAll("nav a")) link.classList.toggle("on", link.dataset.page === page);
   $("title").textContent = PAGES[page];
   if (page === "history") loadHistory();
+  if (page === "price") loadPrice(true);
   if (page === "agents") loadAgents();
   if (page === "signals") loadSignals();
   if (page === "broker") { loadBroker(); loadSymbols(); }
