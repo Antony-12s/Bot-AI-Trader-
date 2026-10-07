@@ -32,6 +32,7 @@ from risk import account_error, block_reason, day_start, stop_distances, stop_le
 
 POLL_SECONDS = 5
 STALE_CANDLES = 2  # a candle that closed this many candle lengths ago is old news (market was shut)
+ENTRY_GRACE_SECONDS = 60  # strategy entries land this soon after a candle opens (an AI call included)
 
 
 def load_config(env_path=ENV_PATH):
@@ -275,6 +276,11 @@ def settle_paper(config, state, candle, symbol_info):
     """Close dry-mode paper positions that this closed candle's range took out."""
     journal = state["journal"]
     for trade in journal.open_trades("paper"):
+        # ponytail: an entry deep inside this candle (an outside signal) cannot be judged by its whole
+        # high/low, which includes prices from before the entry; skip it. Exits inside that one candle
+        # are missed; settle from live ticks if that matters.
+        if trade["opened_at"] - int(candle["time"]) > ENTRY_GRACE_SECONDS:
+            continue
         hit = fills.exit_price(trade, float(candle["high"]), float(candle["low"]), int(candle["spread"]), symbol_info.point)
         if hit:
             price, outcome = hit

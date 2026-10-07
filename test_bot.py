@@ -293,6 +293,16 @@ class PaperTest(unittest.TestCase):
                          [("sell", "traded"), ("buy", "skipped"), ("invalid", "skipped")])
         self.assertIn("position already open", rows[1]["reason"])
 
+    def test_mid_candle_entry_is_not_stopped_by_prices_from_before_it(self):
+        self.journal.open_trade("paper", "r", "XAUUSD", {
+            "side": "buy", "lot": 0.01, "entry": 2650.5, "sl": 2645.5, "tp": 2660.5, "opened_at": TICK.time + 600})
+        entry_candle = {"time": TICK.time, "high": 2651.0, "low": 2640.0, "spread": 30}  # dipped before the entry
+        with mock.patch.object(bot, "notify"):
+            bot.settle_paper(self.config, self.state, entry_candle, GOLD)
+            self.assertEqual(len(self.journal.open_trades("paper")), 1)
+            bot.settle_paper(self.config, self.state, dict(entry_candle, time=TICK.time + CANDLE), GOLD)
+        self.assertEqual(self.journal.closed_trades()[0]["outcome"], "sl")  # the next candle still counts
+
     def test_webhook_off_is_never_polled(self):
         self.state.update(pending=[], webhook_since="0")
         self.run_signals(self.config).assert_not_called()
@@ -310,8 +320,8 @@ class PaperTest(unittest.TestCase):
 
     def test_paper_losses_count_against_the_daily_limit(self):
         self.run_check(candles(CROSS_UP))
-        self.run_check(self.stop_out(shift=1))
-        self.run_check(candles(CROSS_UP, shift=2), dict(self.config, MAX_DAILY_LOSS=4.0))
+        self.run_check(self.stop_out(shift=2))  # the first candle that opens after the entry at TICK.time
+        self.run_check(candles(CROSS_UP, shift=3), dict(self.config, MAX_DAILY_LOSS=4.0))
         self.assertEqual(self.state["last_decision"], "skipped: daily loss limit hit (-5.00)")
 
     def test_ai_brain_learns_from_a_paper_trade(self):
@@ -321,7 +331,7 @@ class PaperTest(unittest.TestCase):
                 mock.patch.object(ai_strategy, "reflect", return_value=("Wait for a pullback.", None, 0.01)) as reflect:
             self.run_check(candles(CROSS_UP), ai_config)
             self.assertEqual(decide.call_args.args[2], "Your track record: no closed trades yet. Trade cautiously and build one.")
-            self.run_check(self.stop_out(shift=1), ai_config)
+            self.run_check(self.stop_out(shift=2), ai_config)  # the first candle after the entry at TICK.time
         reflect.assert_called_once()
         (closed,) = self.journal.closed_trades()
         self.assertEqual(closed["lesson"], "Wait for a pullback.")
@@ -330,7 +340,7 @@ class PaperTest(unittest.TestCase):
         # the brain bought again right after the stop-out; stop that one too, then the budget is gone
         with mock.patch.object(ai_strategy, "decide", return_value=decision) as decide, \
                 mock.patch.object(ai_strategy, "reflect", return_value=(None, "AI API error 500", 0.01)):
-            self.run_check(self.stop_out(shift=2), dict(ai_config, AI_BUDGET_USD=0.06))
+            self.run_check(self.stop_out(shift=3), dict(ai_config, AI_BUDGET_USD=0.06))
         decide.assert_not_called()
         self.assertEqual(len(self.journal.closed_trades()), 2)
         self.assertEqual(self.journal.spend(source="bot"), 0.06)
