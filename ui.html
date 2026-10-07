@@ -524,7 +524,7 @@ async function loadSignals() {
         <button class="switch ${sig.telegram.on ? "on" : ""}" data-switch="telegram"></button></div>
       <div class="sub" style="margin-top: 16px">${sig.telegram.ready
         ? "Only your own chat (TELEGRAM_CHAT_ID) is obeyed; messages from anyone else are ignored."
-        : "Set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID in Settings → Keys &amp; Telegram first."}</div>
+        : `Set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID in <a href="#settings/ai" style="color: var(--accent)">Settings → AI &amp; Telegram</a> first.`}</div>
       <details><summary>Setup guide: Telegram</summary><ol>
         <li>Create a bot with @BotFather and put its token in Settings.</li>
         <li>Message your bot once; the bot log shows your chat id. Put it in Settings.</li>
@@ -699,7 +699,13 @@ $("steps").addEventListener("submit", async (event) => {
 
 const PAGES = { dashboard: "Dashboard", history: "History", signals: "Signals", agents: "AI Agents", broker: "MetaTrader 5", setup: "Setup", settings: "Settings" };
 function route() {
-  const page = location.hash.slice(1) in PAGES ? location.hash.slice(1) : "dashboard";
+  const [wanted, sub] = location.hash.slice(1).split("/");  // #settings/ai opens that Settings section
+  const page = wanted in PAGES ? wanted : "dashboard";
+  const index = FIELDS.findIndex(([name]) => sub && name.toLowerCase().startsWith(sub));
+  if (page === "settings" && index >= 0) {
+    section = index;  // a form built later opens on it; one already built switches now
+    document.querySelector(`.subnav a[data-section="${index}"]`)?.click();
+  }
   for (const id in PAGES) $(id).hidden = id !== page;
   for (const link of document.querySelectorAll("nav a")) link.classList.toggle("on", link.dataset.page === page);
   $("title").textContent = PAGES[page];
