@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 
 import MetaTrader5 as mt5
 
+import agents
 import ai_strategy
 import brain
 import fills
@@ -262,7 +263,8 @@ def finish_trade(config, state, trade_id, price, closed_at, profit, outcome):
     journal = state["journal"]
     trade = journal.close_trade(trade_id, price, closed_at, profit, outcome)
     text = f"closed {trade['side']} {trade['lot']} {trade['symbol']} @ {price} by {outcome}, profit {profit:+.2f}"
-    if brain.learns(config):
+    # only the AI brain's own calls teach it: an agent's, a webhook's or a rules trade is not its lesson
+    if brain.learns(config) and trade.get("brain") in brain.LEARNING:
         spent = journal.spend(source="bot", since=day_start(closed_at))
         lesson, playbook = ai_strategy.review(
             journal, trade, price_path(config, trade), config, "bot", state["run"], spent
@@ -275,9 +277,11 @@ def finish_trade(config, state, trade_id, price, closed_at, profit, outcome):
 
 
 def settle_paper(config, state, candle, symbol_info):
-    """Close dry-mode paper positions that this closed candle's range took out."""
+    """Close dry-mode paper positions on this candle's market that its range took out."""
     journal = state["journal"]
     for trade in journal.open_trades("paper"):
+        if trade["symbol"] != config["SYMBOL"]:
+            continue  # agents trade other markets: a gold candle must never settle a EURUSD trade
         # ponytail: an entry deep inside this candle (an outside signal) cannot be judged by its whole
         # high/low, which includes prices from before the entry; skip it. Exits inside that one candle
         # are missed; settle from live ticks if that matters.
@@ -367,7 +371,9 @@ def current_block(config, state, tick, symbol_info):
     paper = journal is not None and config["MODE"] == "dry"
     spread_points = round((tick.ask - tick.bid) / symbol_info.point)
     start = day_start(tick.time)
-    open_count = len(open_positions(config)) + (len(journal.open_trades("paper")) if paper else 0)
+    # one open position per market (MT5 positions are already filtered by symbol and magic)
+    paper_open = [t for t in journal.open_trades("paper") if t["symbol"] == config["SYMBOL"]] if paper else []
+    open_count = len(open_positions(config)) + len(paper_open)
     pnl = pnl_today(tick.time) + (journal.profit_since(start, "paper") if paper else 0.0)
     spent = journal.spend(source="bot", since=start) if journal else 0.0
     traded = journal.trades_opened_since(start, "paper" if paper else "mt5") if journal else 0
@@ -439,6 +445,61 @@ def wrong_terminal(info):
     return None
 
 
+def run_agents(config, state):
+    """The user's agents (agents.json): on each market, decide when it is time, then act by mode."""
+    journal = state.get("journal")
+    paper = journal is not None and config["MODE"] == "dry"
+    for agent in agents.load():
+        frame = getattr(mt5, "TIMEFRAME_" + agent["timeframe"], None)
+        for market in agent["markets"]:
+            try:
+                run_agent_on(config, state, journal, paper, agent, frame, market)
+            except Exception as error:  # one broken market or agent must not stop the bot
+                print(f"agent {agent.get('name')} on {market}: {error!r}")
+
+
+def run_agent_on(config, state, journal, paper, agent, frame, market):
+    mt5.symbol_select(market, True)
+    rates = mt5.copy_rates_from_pos(market, frame, 0, brain.candles_needed(config) + 1)
+    symbol_info, tick = mt5.symbol_info(market), mt5.symbol_info_tick(market)
+    if rates is None or len(rates) < 2 or symbol_info is None or tick is None:
+        return
+    closed = to_candles(rates[:-1])  # the last row is still forming
+    candle = closed[-1]
+    market_config = dict(config, SYMBOL=market, TIMEFRAME=agent["timeframe"],
+                         CONTRACT_SIZE=getattr(symbol_info, "trade_contract_size", 0) or config["CONTRACT_SIZE"])
+    settle_key = (market, agent["timeframe"])
+    if paper and state["settle_seen"].get(settle_key) not in (None, candle["time"]):
+        settle_paper(market_config, state, candle, symbol_info)  # this market's paper trades, once per new candle
+    state["settle_seen"][settle_key] = candle["time"]
+    key, now = (agent["id"], market), time.time()
+    seen = state["agent_seen"].get(key)
+    if agent["runs"] == "candle":
+        state["agent_seen"][key] = candle["time"]
+        if seen is None or seen == candle["time"]:
+            return  # nothing new; and never act on a candle that closed before the bot started
+    else:
+        if seen is not None and now - seen < agent["every_minutes"] * 60:
+            return
+        state["agent_seen"][key] = now
+    if tick.time - candle["time"] > STALE_CANDLES * candle_seconds(market_config):
+        return  # the market is shut
+    spent = journal.spend(since=day_start(tick.time)) if journal else 0.0
+    signal, confidence, reason, cost = agents.decide(agent, closed, market_config, spent)
+    note = f"{market} · {confidence}% · {reason}"
+    if signal and agent["mode"] == "suggest":
+        notify(config, f"Agent {agent['name']} suggests {signal.upper()} {market} ({confidence}%): {reason}")
+    if signal and agent["mode"] == "auto":
+        blocked, spread_points = current_block(market_config, state, tick, symbol_info)
+        if blocked:
+            note += f" (not traded: {blocked})"
+        elif not open_trade(market_config, state, signal, f"agent {agent['name']}: {reason}", closed,
+                            mt5.symbol_info_tick(market) or tick, symbol_info, spread_points, "agent:" + agent["id"]):
+            note += " (not traded: the order was rejected)"
+    if journal:
+        journal.record_decision("agent:" + agent["id"], state["run"], "agent", candle["time"], signal or "hold", note, cost)
+
+
 def should_stop(state):
     """/stop from Telegram, or stop.flag created by the dashboard while the bot runs."""
     return bool(state.get("stopping")) or STOP_FLAG.exists()
@@ -485,6 +546,8 @@ def main():
             "journal": journal,
             "run": f"{config['MODE']}-{datetime.now():%Y%m%d-%H%M%S}",
             "pending": [],  # (source, text, sent_at) signals waiting for the risk rules
+            "agent_seen": {},  # (agent id, market) -> last candle time (or run time, for timer agents)
+            "settle_seen": {},  # (market, timeframe) -> last candle that settled paper trades there
             "webhook_since": str(int(time.time())),  # alerts sent while the bot was off are stale, skip them
         }
         if STOP_FLAG.exists():
@@ -499,6 +562,7 @@ def main():
                     settle_mt5(config, state)
                 check_market(config, state)
                 outside_signals(config, state)
+                run_agents(config, state)
             time.sleep(POLL_SECONDS)
         STOP_FLAG.touch()
         notify(config, "bot stopped by /stop or the dashboard")
