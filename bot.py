@@ -320,9 +320,18 @@ def to_candles(rates):
         {
             "time": int(row["time"]), "open": float(row["open"]), "high": float(row["high"]),
             "low": float(row["low"]), "close": float(row["close"]), "spread": int(row["spread"]),
+            "volume": tick_volume(row),
         }
         for row in rates
     ]
+
+
+def tick_volume(row):
+    """Ticks in the candle (MT5's volume for CFDs and forex: no exchange volume), 0 when the row has none."""
+    try:
+        return int(row["tick_volume"])
+    except (KeyError, ValueError, IndexError):
+        return 0
 
 
 def current_block(config, state, tick, symbol_info):

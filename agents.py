@@ -67,6 +67,8 @@ def clean(raw):
     name = str(raw.get("name", "")).strip()[:60]
     template = raw.get("template") or ""
     text = str(raw.get("strategy", "")).strip()[:2000]
+    if not text and template in strategies.PLAIN:
+        text = strategies.PLAIN[template][2]  # a template left blank means its own words
     markets = [str(m).strip() for m in raw.get("markets", []) if str(m).strip()]
     agent = {
         "id": str(raw.get("id") or uuid.uuid4().hex[:8]),
@@ -85,7 +87,7 @@ def clean(raw):
     problems = []
     if not name:
         problems.append("give it a name")
-    if template and template not in strategies.STRATEGIES:
+    if template and template not in strategies.PLAIN:
         problems.append(f"unknown template {template}")
     if not template and not text:
         problems.append("describe the strategy")
@@ -120,7 +122,8 @@ def clean(raw):
 def runs_template(agent):
     """A template whose rule text is unchanged runs the template's own code, exactly; edited text is read instead."""
     template = agent.get("template")
-    return template in strategies.PLAIN and agent.get("strategy", "").strip() in ("", strategies.PLAIN[template][2])
+    # written-rules templates have no code: the built-in analyst reads their words, edited or not
+    return template in strategies.STRATEGIES and agent.get("strategy", "").strip() in ("", strategies.PLAIN[template][2])
 
 
 def migrate(values, path=None):
@@ -176,7 +179,8 @@ def decide(agent, candles, config, journal_spent=0.0):
     The enforced numbers are checked here, after the analyst: an RSI outside the strategy's range or
     a confidence under the minimum turns any call into a hold.
     """
-    candidates = strategies.candidates(candles, dict(config, STRATEGY=agent["template"])) if agent["template"] else []
+    candidates = (strategies.candidates(candles, dict(config, STRATEGY=agent["template"]))
+                  if agent["template"] in strategies.STRATEGIES else [])
     if agent["analyst"] == "rules" and runs_template(agent):
         if not candidates:
             return None, 0, "no setup", 0.0

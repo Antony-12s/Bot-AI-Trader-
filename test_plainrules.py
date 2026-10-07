@@ -66,6 +66,33 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(plainrules.decide("Buy when price closes above the previous high.", engulf)[0], "buy")
         self.assertIsNone(plainrules.decide("Sell on a red candle.", engulf)[0])
 
+    def test_every_written_rules_template_is_read_in_full(self):
+        for name, (_, _, rule, *_) in strategies.PLAIN.items():
+            if name in strategies.STRATEGIES:
+                continue  # these run their own code
+            got = plainrules.summary(rule)
+            self.assertTrue(got["buy"] and got["sell"] and not got["unknown"], name)
+
+    def test_at_least_n_of(self):
+        text = strategies.PLAIN["confluence"][2]
+        rising = bars([100 + i * 0.5 for i in range(80)])
+        rules = plainrules.parse(text)
+        self.assertEqual((len(rules["buy"]), rules["need"]["buy"], rules["need"]["sell"]), (4, 3, 3))
+        signal, reason = plainrules.decide(text, rising)
+        self.assertEqual(signal, "buy")
+        self.assertIn("price above EMA(50)", reason)
+
+    def test_vwap_and_histogram_slope(self):
+        day = [{"time": 900 * i, "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 10} for i in range(40)]
+        day[-1] = dict(day[-1], high=99.0, low=99.0, close=99.0, open=100.0)  # 1% under the session average
+        self.assertEqual(plainrules.decide("Buy when price is more than 0.3% below VWAP.", day)[0], "buy")
+        self.assertIsNone(plainrules.decide("Buy when price is more than 3% below VWAP.", day)[0])
+        self.assertEqual(plainrules.read_clause("the macd histogram is rising"), ("histogram_slope", ">"))
+        speeding_up = bars([100 + 0.01 * i * i for i in range(80)])
+        self.assertTrue(plainrules.holds(("histogram_slope", ">"), speeding_up))
+        self.assertFalse(plainrules.holds(("histogram_slope", "<"), speeding_up))
+        self.assertEqual(plainrules.mirror(("vwap_gap", "<", 0.3)), ("vwap_gap", ">", 0.3))
+
     def test_too_little_history_reads_as_no(self):
         self.assertEqual(plainrules.decide("Buy when price is above EMA 200.", bars([1.0] * 10)), (None, "waiting: buy needs price above EMA(200)"))
 

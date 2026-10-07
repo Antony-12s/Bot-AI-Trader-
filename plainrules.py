@@ -62,10 +62,16 @@ PATTERNS = [
     (rf"macd\s+(?:line\s+)?{CROSS_DOWN}\s+(?:its\s+)?signal", lambda m: ("macd_cross", "<")),
     (rf"macd\s+(?:line\s+)?(?:is\s+)?{ABOVE}\s+(?:its\s+)?signal", lambda m: ("macd_vs_signal", ">")),
     (rf"macd\s+(?:line\s+)?(?:is\s+)?{BELOW}\s+(?:its\s+)?signal", lambda m: ("macd_vs_signal", "<")),
+    (r"(?:macd\s+)?histogram\s+(?:is\s+)?(?:rising|growing|increasing)", lambda m: ("histogram_slope", ">")),
+    (r"(?:macd\s+)?histogram\s+(?:is\s+)?(?:falling|shrinking|decreasing)", lambda m: ("histogram_slope", "<")),
     (r"(?:macd\s+)?histogram\s+(?:is\s+)?(?:positive|above (?:zero|0))", lambda m: ("histogram", ">")),
     (r"(?:macd\s+)?histogram\s+(?:is\s+)?(?:negative|below (?:zero|0))", lambda m: ("histogram", "<")),
     (rf"macd\s+(?:line\s+)?(?:is\s+)?{ABOVE}\s+(?:zero|0)", lambda m: ("macd_vs_zero", ">")),
     (rf"macd\s+(?:line\s+)?(?:is\s+)?{BELOW}\s+(?:zero|0)", lambda m: ("macd_vs_zero", "<")),
+    (rf"(?:at least|more than)\s+{NUMBER}\s*%\s+{BELOW}\s+(?:the\s+)?vwap", lambda m: ("vwap_gap", "<", float(m[1]))),
+    (rf"(?:at least|more than)\s+{NUMBER}\s*%\s+{ABOVE}\s+(?:the\s+)?vwap", lambda m: ("vwap_gap", ">", float(m[1]))),
+    (rf"{ABOVE}\s+(?:the\s+)?vwap", lambda m: ("vwap", ">")),
+    (rf"{BELOW}\s+(?:the\s+)?vwap", lambda m: ("vwap", "<")),
     (r"bullish engulfing", lambda m: ("engulfing", "bull")),
     (r"bearish engulfing", lambda m: ("engulfing", "bear")),
     (r"(?:green|bullish|up)\s+candle|candle\s+(?:is\s+|closes\s+)?(?:green|bullish)", lambda m: ("candle", "green")),
@@ -93,7 +99,7 @@ def read_clause(clause):
 
 def parse(text):
     """{"buy": [conditions], "sell": [conditions], "unknown": {"buy": [...], "sell": [...]}}."""
-    rules = {"buy": [], "sell": [], "unknown": {"buy": [], "sell": []}}
+    rules = {"buy": [], "sell": [], "unknown": {"buy": [], "sell": []}, "need": {"buy": None, "sell": None}}
     mirrored = set()
     for sentence in re.split(r"(?<=[.!?;])\s+|\n+", text.lower().replace("–", "-")):
         sentence = sentence.strip(" .!?;")
@@ -106,6 +112,11 @@ def parse(text):
             sentence = re.sub(r".*?\b(mirror|opposite|reverse|vice versa|other way)\b[^,]*", "", sentence)
         body = re.sub(r"^\s*(?:and\s+)?(?:buy|sell|go long|go short|long|short|enter)\w*\s+(?:when|if|once|on|after)?\s*", "", sentence)
         body = re.sub(r"between\s+(\d+(?:\.\d+)?)\s+and\s+", r"between \1 to ", _ma_tokens(body))
+        enough = re.match(r"\s*at least (\d+) of [^:]*:\s*", body)  # "at least 3 of these 4 hold: A, B, C, D"
+        if enough:
+            body = body[enough.end():]
+            for side in sides:
+                rules["need"][side] = int(enough[1])
         for clause in re.split(r",|\band\b|\bwhile\b|\bwith\b|\bplus\b|\balso\b|\bafter\b|\bwhen\b", body):
             clause = clause.strip()
             if not set(re.findall(r"[a-z]+", clause)) - FILLER:
@@ -117,6 +128,7 @@ def parse(text):
         if side in mirrored:
             rules[side] += [mirror(condition) for condition in rules[other]]
             rules["unknown"][side] += rules["unknown"][other]
+            rules["need"][side] = rules["need"][side] or rules["need"][other]
     return rules
 
 
@@ -155,6 +167,9 @@ def describe(condition):
         "macd_vs_signal": lambda: f"MACD {side(args[0])} its signal line",
         "macd_vs_zero": lambda: f"MACD {side(args[0])} zero",
         "histogram": lambda: f"MACD histogram {'positive' if args[0] == '>' else 'negative'}",
+        "histogram_slope": lambda: f"MACD histogram {'rising' if args[0] == '>' else 'falling'}",
+        "vwap": lambda: f"price {side(args[0])} VWAP",
+        "vwap_gap": lambda: f"price over {args[1]:g}% {side(args[0])} VWAP",
         "engulfing": lambda: f"{'bullish' if args[0] == 'bull' else 'bearish'} engulfing candle",
         "candle": lambda: f"{args[0]} candle",
         "band": lambda: f"close {side(args[0])} the {args[1]} Bollinger band",
@@ -193,15 +208,21 @@ def holds(condition, candles):
             if kind == "price_vs_ma":
                 return beyond(args[0], prices[-1], values[-1])
             return crossed(args[0], (values[-2], prices[-2]), (values[-1], prices[-1]))
-        if kind.startswith("macd") or kind == "histogram":
+        if kind.startswith(("macd", "histogram")):
             macd_line, signal, histogram = indicators.macd(prices)
             if kind == "histogram":
                 return beyond(args[0], histogram[-1], 0)
+            if kind == "histogram_slope":
+                return beyond(args[0], histogram[-1], histogram[-2])
             if kind == "macd_vs_zero":
                 return beyond(args[0], macd_line[-1], 0)
             if kind == "macd_vs_signal":
                 return beyond(args[0], macd_line[-1], signal[-1])
             return crossed(args[0], (signal[-2], macd_line[-2]), (signal[-1], macd_line[-1]))
+        if kind.startswith("vwap"):
+            average = indicators.vwap(candles)[-1]
+            target = average * (1 + args[1] / 100 if args[0] == ">" else 1 - args[1] / 100) if kind == "vwap_gap" else average
+            return beyond(args[0], prices[-1], target)
         last, before = candles[-1], candles[-2]
         if kind == "candle":
             return last["close"] > last["open"] if args[0] == "green" else last["close"] < last["open"]
@@ -210,7 +231,7 @@ def holds(condition, candles):
                 return before["close"] < before["open"] < last["close"] and last["open"] <= before["close"] and last["close"] > last["open"]
             return before["close"] > before["open"] > last["close"] and last["open"] >= before["close"] and last["close"] < last["open"]
         if kind == "band":
-            lower, middle, upper = indicators.bollinger(prices, 20)
+            lower, middle, upper = indicators.bollinger(prices[-20:], 20)  # the last band only: a backtest asks thousands of times
             return beyond(args[0], prices[-1], {"lower": lower, "middle": middle, "upper": upper}[args[1]][-1])
         if kind == "previous":
             return last["close"] > before["high"] if args[0] == ">" else last["close"] < before["low"]
@@ -223,7 +244,7 @@ def summary(text):
     """What the analyst understood, for the agent wizard: conditions in words and what it could not read."""
     rules = parse(text)
     return {side: [describe(c) for c in rules[side]] for side in ("buy", "sell")} | {"unknown": sorted(
-        set(rules["unknown"]["buy"]) | set(rules["unknown"]["sell"]))}
+        set(rules["unknown"]["buy"]) | set(rules["unknown"]["sell"])), "need": rules["need"]}
 
 
 def decide(text, candles):
@@ -233,9 +254,9 @@ def decide(text, candles):
     if not ready:
         return None, "no rule the built-in analyst can read: rewrite it, or pick an AI analyst"
     missing = {side: [describe(c) for c in rules[side] if not holds(c, candles)] for side in ready}
-    met = [side for side in ready if not missing[side]]
+    met = [side for side in ready if len(rules[side]) - len(missing[side]) >= (rules["need"][side] or len(rules[side]))]
     if len(met) != 1:
         return None, "both sides' rules hold: hold" if met else "waiting: " + "; ".join(
             f"{side} needs {', '.join(missing[side])}" for side in ready)
     side = met[0]
-    return side, "; ".join(describe(condition) for condition in rules[side])
+    return side, "; ".join(describe(condition) for condition in rules[side] if describe(condition) not in missing[side])

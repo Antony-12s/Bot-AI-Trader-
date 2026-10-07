@@ -91,6 +91,23 @@ def atr(candles, period=14):
     return values
 
 
+def vwap(candles, day_seconds=86400):
+    """Session VWAP: the day's average price, each candle weighted by its volume, restarting each day.
+
+    Days follow the candle times (broker server time). MT5 gives tick volume for CFDs and forex, the
+    usual stand-in; candles without volume weigh 1 each, which makes it the day's plain average.
+    """
+    values, day, weighted, total = [], None, 0.0, 0.0
+    for candle in candles:
+        if candle["time"] // day_seconds != day:
+            day, weighted, total = candle["time"] // day_seconds, 0.0, 0.0
+        weight = candle.get("volume") or 1
+        weighted += weight * (candle["high"] + candle["low"] + candle["close"]) / 3
+        total += weight
+        values.append(weighted / total)
+    return values
+
+
 def resample(candles, factor, seconds):
     """Merge candles of `seconds` length into bars `factor` times longer, aligned to the clock.
 

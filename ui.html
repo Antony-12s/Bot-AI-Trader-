@@ -922,8 +922,8 @@ function showUnderstood() {
     $("understood").innerHTML = got.exact
       ? `<div class="sub" style="margin-top: 10px">Built-in analyst: runs the <b>${esc(PLAIN[draft.template][0])}</b> setup exactly as written. Edit the words and it reads them instead.</div>`
       : `<div class="label" style="margin-top: 12px">What the built-in analyst reads</div>
-        <div class="tags"><b style="min-width: 40px">Buy</b>${list(got.buy)}</div>
-        <div class="tags"><b style="min-width: 40px">Sell</b>${list(got.sell)}</div>
+        ${["buy", "sell"].map((side) => `<div class="tags"><b style="min-width: 40px">${side === "buy" ? "Buy" : "Sell"}${
+          got.need?.[side] ? ` · any ${got.need[side]} of ${got[side].length}` : ""}</b>${list(got[side])}</div>`).join("")}
         ${got.unknown.length ? `<div class="sub loss" style="margin-top: 6px">Not understood (that side will not trade): ${got.unknown.map(esc).join(" · ")}</div>` : ""}`;
   }, 300);
 }
@@ -933,11 +933,11 @@ const stepStart = () => `
     <div class="sub">Describe any strategy in plain English. The numbers you write are enforced the same way a template's are.</div></div>
     <button class="ghost" data-template="">Write my own</button></div>
   <div class="sub" style="margin-bottom: 10px">Or start from a ready strategy, ordered by how picky it is. Every new agent starts in Watch only: it records its calls from the first candle, and you decide about trading once there is something to look at.</div>
-  <div class="gallery">${Object.entries(PLAIN).map(([id, [name, idea, rule, conditions]]) => `
+  <div class="gallery">${Object.entries(PLAIN).map(([id, [name, idea, rule, conditions, timeframe]]) => `
     <div class="gcard" data-template="${id}"><b style="font-size: 17px">${esc(name)}</b>
       <div class="sub" style="margin: 6px 0 10px">${esc(idea)}</div><div class="rule">${esc(rule)}</div>
       <div class="picky"><span class="label">How picky</span><b>${PICKY[conditions] || ""}</b></div><div class="bars">${pickyBars(conditions)}</div>
-      <div class="tags"><span>${conditions} condition${conditions === 1 ? "" : "s"}</span><span>free to run</span></div></div>`).join("")}</div>`;
+      <div class="tags">${timeframe ? `<span>${timeframe} candles</span>` : ""}<span>${conditions} condition${conditions === 1 ? "" : "s"}</span><span>free to run</span></div></div>`).join("")}</div>`;
 
 const stepWhat = () => `
   <div class="field"><label>Name</label><input data-f="name" value="${esc(draft.name)}"></div>
@@ -1030,7 +1030,7 @@ $("agentsview").addEventListener("click", async (event) => {
     if (d.agent && !draft) { pickedAgent = d.agent; return loadMyAgents(); }
     if (d.template !== undefined && wizStep === 0) {
       draft.template = d.template;
-      if (d.template) { draft.name = PLAIN[d.template][0]; draft.strategy = PLAIN[d.template][2]; }
+      if (d.template) { [draft.name, , draft.strategy] = PLAIN[d.template]; draft.timeframe = PLAIN[d.template][4] || draft.timeframe; }
       wizStep = 1; return renderWizard();
     }
     if (d.market) {

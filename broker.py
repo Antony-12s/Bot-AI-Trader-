@@ -355,7 +355,7 @@ def history(symbol, timeframe, count):
     if rates is None or len(rates) == 0 or info is None:
         raise ValueError(f"no history for {symbol} {timeframe}: is the symbol name right, and MT5 logged in?")
     bars = [{"time": int(r["time"]), "open": float(r["open"]), "high": float(r["high"]), "low": float(r["low"]),
-             "close": float(r["close"]), "spread": int(r["spread"])} for r in rates]
+             "close": float(r["close"]), "spread": int(r["spread"]), "volume": int(r["tick_volume"])} for r in rates]
     return bars, info.digits, info.trade_contract_size
 
 
