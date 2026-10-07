@@ -139,10 +139,45 @@ class BrokerTest(unittest.TestCase):
                 mocks["terminal_info"].return_value = ours
                 self.assertTrue(broker._attach())
 
+    def test_login_reports_what_the_broker_says_the_account_is(self):
+        self.patched()
+        self.assertEqual(broker.login("123456", "pw", "S"), "demo")
+        self.patched(account_info=SimpleNamespace(**dict(vars(ACCOUNT), trade_mode=broker.mt5.ACCOUNT_TRADE_MODE_REAL)))
+        self.assertEqual(broker.login("123456", "pw", "S"), "live")
+
+    def test_switch_uses_the_saved_password_and_checks_the_account_type(self):
+        mocks = self.patched(account_info=SimpleNamespace(**dict(vars(ACCOUNT), login=999)))
+        broker.switch("123456", "XM-Demo", "demo")
+        mocks["login"].assert_called_once_with(123456, server="XM-Demo", timeout=60000)  # no password
+        real = SimpleNamespace(**dict(vars(ACCOUNT), trade_mode=broker.mt5.ACCOUNT_TRADE_MODE_REAL))
+        self.patched(account_info=real)
+        with self.assertRaisesRegex(ValueError, "not a demo account"):
+            broker.switch("123456", "XM", "demo")
+        broker.switch("123456", "XM", "live")  # already on it: no login call needed
+        with self.assertRaisesRegex(ValueError, "no live account yet"):
+            broker.switch("", "", "live")
+
     def test_own_terminal_needs_an_installed_mt5(self):
         self.patched()
         with mock.patch.object(broker, "installed_terminals", return_value=[]), self.assertRaises(ValueError):
             broker.setup_own_terminal()
+
+    def test_dashboard_files_each_login_under_its_real_type_and_keeps_the_mode(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            env = Path(folder, ".env")
+            env.write_text("MODE=demo\n", encoding="utf-8")
+            with mock.patch.object(ui, "ENV_PATH", env), mock.patch.object(ui, "bot_running", return_value=False), \
+                    mock.patch.object(broker, "login", return_value="live"), mock.patch.object(broker, "status", return_value={}):
+                result = ui.broker_login({"login": "450272430", "password": "pw", "server": "XMGlobal-MT5 20"}, env)
+            saved = ui.read_env(env)
+            self.assertEqual(result["saved_as"], "live")
+            self.assertEqual((saved["LIVE_LOGIN"], saved["LIVE_SERVER"], saved["DEMO_LOGIN"]), ("450272430", "XMGlobal-MT5 20", ""))
+            self.assertEqual(saved["MODE"], "demo")  # logging in to a real account never switches the bot to Live
+            self.assertNotIn("pw", env.read_text(encoding="utf-8"))
+            with mock.patch.object(ui, "bot_running", return_value=True), self.assertRaisesRegex(ValueError, "Stop the bot"):
+                ui.switch_mode("live", env)
 
     def test_dashboard_refuses_to_switch_accounts_under_a_running_bot(self):
         mocks = self.patched()

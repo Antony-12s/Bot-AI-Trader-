@@ -92,6 +92,10 @@ details { background: var(--panel2); border-radius: 12px; padding: 12px; margin-
 summary { cursor: pointer; font-weight: 600; }
 details ol { padding-left: 20px; color: var(--muted); }
 code { background: var(--bg); padding: 1px 6px; border-radius: 6px; color: var(--text); }
+.slots { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.slot { background: var(--panel2); border: 1px solid transparent; border-radius: 12px; padding: 10px 12px; }
+.slot.on { border-color: var(--accent); }
+.slot b { display: block; margin-top: 6px; }
 .ownbox { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--panel2); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
 .balance { text-align: right; line-height: 1.1; }
 .balance b { font-size: 20px; }
@@ -342,11 +346,11 @@ function showMode(settings) {
 $("modes").addEventListener("click", async (event) => {
   const next = event.target.dataset.mode;
   if (!next || next === mode) return;
-  if (next === "live" && !confirm("Live sends orders on any account, real money included. Switch to Live?")) return;
+  if (next === "live" && !confirm("Switch TradeBot's MetaTrader 5 to your Live account? The bot will trade real money there.")) return;
   try {
-    const settings = await api("/api/settings", { MODE: next });
-    showMode(settings); buildForm(settings);
-    if ($("go").textContent === "Stop") alert("Saved. The running bot keeps its old mode until you Stop and Start it.");
+    // logs TradeBot's MT5 into that mode's own account (refused while the bot runs), then saves MODE
+    const settings = await api("/api/broker/mode", { mode: next });
+    showMode(settings); buildForm(settings); loadBroker().catch(() => {});
   } catch (error) { alert(error.message); }
 });
 
@@ -688,7 +692,12 @@ async function loadBroker() {
         <div class="sub" style="margin: 4px 0 10px">The bot shares it with your manual trading. Give TradeBot its own copy (about 120 MB, copied from the MT5 already installed) so it logs in and trades on its own, hidden.</div>
         ${setup.state === "failed" ? `<p class="loss">${esc(setup.error)}</p>` : ""}
         <button class="save" data-mt5own="1">Give TradeBot its own MT5</button></div>`;
-  $("acct").innerHTML = ownBlock + (!account.connected ? `<b>MT5 not reachable</b><div class="sub" style="margin-top: 8px">${esc(account.error)}</div>
+  const saved = account.accounts || {};
+  const slots = `<div class="slots">${["demo", "live"].map((m) => `
+    <div class="slot ${mode === m ? "on" : ""}"><span class="pill ${m === "demo" ? "demo" : "real"}">${m.toUpperCase()}</span>
+      <b>${saved[m] && saved[m].login ? esc(saved[m].login) : "not set"}</b>
+      <div class="sub">${saved[m] && saved[m].login ? esc(saved[m].server) + (mode === m ? " · in use" : " · press " + (m === "demo" ? "Demo" : "Live") + " at the top to use") : "log in to one with the form"}</div></div>`).join("")}</div>`;
+  $("acct").innerHTML = ownBlock + slots + (!account.connected ? `<b>MT5 not reachable</b><div class="sub" style="margin-top: 8px">${esc(account.error)}</div>
       <div class="sub" style="margin-top: 8px">Install MetaTrader 5 from your broker and open it once.</div>`
     : !account.logged_in ? `<b>Terminal open, no account</b><div class="sub" style="margin-top: 8px">Log in with the form to start trading through it.</div>`
     : `<div class="agent-head"><b style="font-size: 20px">${esc(account.login)}</b><span class="pill ${kind}">${kind === "demo" ? "DEMO" : "REAL MONEY"}</span></div>
@@ -737,8 +746,10 @@ $("loginform").addEventListener("submit", async (event) => {
   $("acctpw").value = "";  // do not keep the password in the page
   $("loginmsg").textContent = "Logging in…"; $("loginmsg").className = "msg";
   try {
-    await api("/api/broker/login", form);
-    $("loginmsg").textContent = "Logged in."; $("loginmsg").className = "msg win";
+    const result = await api("/api/broker/login", form);
+    $("loginmsg").textContent = `Logged in, saved as your ${result.saved_as === "demo" ? "Demo" : "Live"} account.`
+      + (result.saved_as !== mode ? ` Press ${result.saved_as === "demo" ? "Demo" : "Live"} at the top to trade it.` : "");
+    $("loginmsg").className = "msg win";
     symbolNames = null; loadBroker(); loadSymbols();
   } catch (error) { $("loginmsg").textContent = error.message; $("loginmsg").className = "msg loss"; }
 });
@@ -806,8 +817,8 @@ $("steps").addEventListener("click", async (event) => {
     else if (target.dataset.act === "start") await api("/api/bot/start", {});
     else if (target.dataset.sym) showMode(await api("/api/settings", { SYMBOL: target.dataset.sym }));
     else if (target.dataset.mode) {
-      if (target.dataset.mode === "live" && !confirm("Live sends orders on any account, real money included. Choose Live?")) return;
-      const settings = await api("/api/settings", { MODE: target.dataset.mode });
+      if (target.dataset.mode === "live" && !confirm("Use your Live account? The bot will trade real money there.")) return;
+      const settings = await api("/api/broker/mode", { mode: target.dataset.mode });  // also moves MT5 to that account
       showMode(settings); buildForm(settings);
     } else if (target.dataset.act !== "recheck") return;
   } catch (error) { alert(error.message); }

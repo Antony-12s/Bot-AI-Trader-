@@ -43,6 +43,11 @@ DEFAULTS = {
     "WEBHOOK_TOPIC": "",
     "SIGNAL_TELEGRAM": "off",
     "AUTO_START_BOT": "off",
+    # The broker accounts behind Demo and Live (no passwords: TradeBot's MT5 remembers those itself)
+    "DEMO_LOGIN": "",
+    "DEMO_SERVER": "",
+    "LIVE_LOGIN": "",
+    "LIVE_SERVER": "",
 }
 NUMBER_TYPES = {
     "AI_BUDGET_USD": float,

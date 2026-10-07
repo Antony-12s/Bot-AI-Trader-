@@ -234,13 +234,35 @@ def test_ai_key(body, path=ENV_PATH):
     return {"models": ai_strategy.list_models(provider, key), "default": ai_strategy.DEFAULT_MODELS[provider]}
 
 
-def broker_login(body):
+def broker_login(body, path=ENV_PATH):
     """Log MT5 into the account from the form. Refused while a bot trades: it would switch under it."""
     if bot_running():
         raise ValueError("Stop the bot before switching accounts")
     import broker
-    broker.login(body.get("login", ""), body.get("password", ""), body.get("server", ""))
-    return broker.status()
+    kind = broker.login(body.get("login", ""), body.get("password", ""), body.get("server", ""))
+    # filed under what the broker says it is (a real account can never land in the Demo slot); MODE is not changed
+    save_settings({f"{kind.upper()}_LOGIN": str(body.get("login")).strip(), f"{kind.upper()}_SERVER": str(body.get("server")).strip()}, path)
+    return dict(broker.status(), saved_as=kind)
+
+
+def switch_mode(mode, path=ENV_PATH):
+    """Demo / Live in the header: move TradeBot's MT5 to that mode's account, then save MODE."""
+    import broker
+    if mode not in ("demo", "live"):
+        raise ValueError("choose demo or live")
+    if bot_running():
+        raise ValueError("Stop the bot before switching between Demo and Live")
+    values = read_env(path)
+    broker.switch(values[f"{mode.upper()}_LOGIN"], values[f"{mode.upper()}_SERVER"], mode)
+    save_settings({"MODE": mode}, path)
+    return public_settings(path)
+
+
+def broker_page():
+    import broker
+    values = read_env()
+    return dict(broker.status(), accounts={mode: {"login": values[f"{mode.upper()}_LOGIN"], "server": values[f"{mode.upper()}_SERVER"]}
+                                           for mode in ("demo", "live")})
 
 
 def read_env(path=ENV_PATH):
@@ -374,7 +396,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, {"run_at_login": __import__("desktop").run_at_login()})
         if url.path in ("/api/broker", "/api/broker/symbols"):
             import broker  # here: the MetaTrader5 package only loads once the page asks for it
-            return self.reply(200, broker.status() if url.path == "/api/broker" else broker.symbols())
+            return self.reply(200, broker_page() if url.path == "/api/broker" else broker.symbols())
         self.reply(404, {"error": "not found"})
 
     def do_POST(self):
@@ -394,6 +416,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/ai/test": lambda: test_ai_key(body),  # the key is only sent to its own AI company
             "/api/app/show": lambda: (show_window and show_window(), {"shown": bool(show_window)})[1],
             "/api/broker/install": lambda: (__import__("broker").start_install(), {"started": True})[1],
+            "/api/broker/mode": lambda: switch_mode(body.get("mode")),
             "/api/broker/own": lambda: (__import__("broker").setup_own_terminal(), {"started": True})[1],
             "/api/broker/show": lambda: {"windows": __import__("broker").show_terminal(bool(body.get("show")))},
         }

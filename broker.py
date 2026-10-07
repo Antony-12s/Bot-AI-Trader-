@@ -226,7 +226,11 @@ def status():
 
 
 def login(account, password, server):
-    """Log the terminal into a broker account. Raises ValueError with the terminal's reason."""
+    """Log the terminal into a broker account. Raises ValueError with the terminal's reason.
+
+    Returns "demo" or "live": what the broker says the account is, so the caller files it under
+    the right mode whatever the user thought it was.
+    """
     account, server = str(account).strip(), str(server).strip()
     if not account.isdigit():
         raise ValueError("the account number is digits only")
@@ -237,6 +241,26 @@ def login(account, password, server):
             raise ValueError(_error("cannot reach the MT5 terminal (is it installed?)"))
         if not mt5.login(int(account), password=password, server=server, timeout=60000):
             raise ValueError(_error("login failed, check the account, password and server"))
+        info = mt5.account_info()
+    return "demo" if info is not None and info.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO else "live"
+
+
+def switch(account, server, mode):
+    """Log back into a saved account with the password the terminal remembered; it must be a `mode` account."""
+    if not str(account).isdigit():
+        raise ValueError(f"no {mode} account yet: log in to one on the MetaTrader 5 page first")
+    with LOCK:
+        if not _attach():
+            raise ValueError(_error("cannot reach the MT5 terminal"))
+        current = mt5.account_info()
+        if current is None or current.login != int(account):
+            # no password: MT5 uses the one it saved at the first login
+            if not mt5.login(int(account), server=server, timeout=60000):
+                raise ValueError(_error(f"could not switch to the {mode} account; log in to it again on the MetaTrader 5 page"))
+            current = mt5.account_info()
+        is_demo = current is not None and current.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO
+    if mode == "demo" and not is_demo:
+        raise ValueError(f"account {account} is not a demo account")
 
 
 def candles(symbol, timeframe, count):
