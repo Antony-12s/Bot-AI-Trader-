@@ -11,3 +11,6 @@ TradeBot.spec
 bot.log
 bot.alive
 .env.check
+agents.json
+agents.json.part
+strategies.moved

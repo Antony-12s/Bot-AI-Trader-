@@ -131,6 +131,22 @@ STRATEGIES = {
     "mr_zscore": mr_zscore,
 }
 
+# The agent wizard's "Start from" gallery, least to most picky: plain name, idea, the exact rule in words
+# (it must match the code above) and how many conditions must all agree. An agent that keeps the rule's
+# words unchanged runs the code above; once edited, the built-in analyst (plainrules.py) reads the words.
+PLAIN = {
+    "ma_cross": ["Average crossover", "Follows the direction the average price turns. Trades the most often.",
+                 "Buy when the 10-candle average price crosses above the 30-candle average. Sell on the opposite cross.", 1],
+    "bollinger_breakout": ["Breakout after a quiet spell", "Waits for a calm, narrow market, then follows the price when it breaks out.",
+                           "Buy when price closes above the Bollinger bands right after they had narrowed to half their recent width. Sell on a close below them.", 2],
+    "rsi_reversion": ["Bounce after a big move", "When price has run too far too fast, bets on a bounce back.",
+                      "Buy when RSI climbs back above 30 just after a close below the lower Bollinger band. Sell when RSI drops back below 70 after a close above the upper band.", 2],
+    "trend_pullback": ["Buy the dip in a trend", "Trades with a clear trend, but only after a small step back.",
+                       "Buy when the 50-candle average is rising, price dipped to the 20-candle average in the last 3 candles and now closes back above it on a green candle, with RSI between 40 and 65. Sell on the mirror image.", 5],
+    "mr_zscore": ["Snap back to normal", "Only in calm, trendless markets: bets a stretched price returns to its average.",
+                  "Buy when the bigger timeframe shows no trend and no volatility spike, price has stretched at least 2 ATR below its 20-candle average on a fresh move, and a candle then closes above the one before. Sell on the mirror image.", 6],
+}
+
 
 def selected(config):
     """Strategy names chosen by STRATEGY in .env."""

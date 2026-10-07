@@ -135,48 +135,6 @@ class HistoryTest(unittest.TestCase):
         self.assertEqual((rows[1]["reason"], rows[1]["lesson"]), ("rsi high", "sold the top"))
 
 
-class AgentsTest(unittest.TestCase):
-    def setUp(self):
-        folder = tempfile.TemporaryDirectory()
-        self.addCleanup(folder.cleanup)
-        self.env = Path(folder.name, ".env")
-        self.env.write_text("STRATEGY=trend_pullback,ma_cross\n", encoding="utf-8")
-
-    def test_cards_split_trades_by_the_strategy_named_in_the_reason(self):
-        journal = Journal()
-        position = {"side": "buy", "lot": 0.01, "entry": 1.0, "sl": 0.9, "tp": 1.1, "opened_at": 1}
-        for source, reason, profit in (("paper", "ma_cross: crossed", 2.0), ("replay", "ma_cross: crossed", -1.0), ("paper", "hybrid AI words", 5.0)):
-            journal.close_trade(journal.open_trade(source, "r", "X", dict(position, reason=reason)), 1.1, 2, profit, "tp")
-        journal.record_decision("bot", "r", "decide", 3, "buy", "ma_cross: crossed")
-        cards = {card["name"]: card for card in ui.agents(journal, ui.read_env(self.env))}
-        self.assertEqual((cards["ma_cross"]["totals"]["trades"], cards["ma_cross"]["live_trades"]), (2, 1))
-        self.assertEqual(len(cards["ma_cross"]["decisions"]), 1)
-        self.assertTrue(cards["trend_pullback"]["armed"])
-        self.assertFalse(cards["rsi_reversion"]["armed"])
-        self.assertEqual(cards["trend_pullback"]["totals"]["trades"], 0)
-
-    def test_quick_arms_from_two_requests_both_stick(self):
-        names = ["rsi_reversion", "bollinger_breakout", "mr_zscore"]
-        threads = [threading.Thread(target=ui.arm, args=(name, True, self.env)) for name in names]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        armed = ui.read_env(self.env)["STRATEGY"]
-        self.assertTrue(all(name in armed or armed == "all" for name in names), armed)
-
-    def test_arm_and_disarm_rewrite_strategy_in_registry_order(self):
-        ui.arm("rsi_reversion", True, self.env)
-        self.assertEqual(ui.read_env(self.env)["STRATEGY"], "ma_cross,trend_pullback,rsi_reversion")
-        ui.arm("ma_cross", False, self.env)
-        ui.arm("trend_pullback", False, self.env)
-        self.assertEqual(ui.read_env(self.env)["STRATEGY"], "rsi_reversion")
-        with self.assertRaises(ValueError):
-            ui.arm("rsi_reversion", False, self.env)  # the last one stays
-        with self.assertRaises(ValueError):
-            ui.arm("nope", True, self.env)
-
-
 class SignalsPageTest(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory()
@@ -270,6 +228,12 @@ class MyAgentsTest(unittest.TestCase):
             (card,) = ui.my_agents(journal, path)
         self.assertEqual((card["totals"]["trades"], card["totals"]["net"]), (1, 3.0))
         self.assertEqual(len(card["decisions"]), 1)
+
+    def test_wizard_shows_what_the_built_in_analyst_reads(self):
+        import strategies
+        self.assertTrue(ui.understand({"template": "mr_zscore", "strategy": strategies.PLAIN["mr_zscore"][2]})["exact"])
+        got = ui.understand({"template": "", "strategy": "Buy when RSI is below 30 and the moon is full."})
+        self.assertEqual((got["exact"], got["buy"], got["unknown"]), (False, ["RSI below 30"], ["the moon is full"]))
 
 
 class TelegramTestTest(unittest.TestCase):

@@ -190,7 +190,6 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <a href="#signals" data-page="signals">Signals</a>
   <div class="group">• AUTOMATION</div>
   <a href="#myagents" data-page="myagents">AI Agents</a>
-  <a href="#agents" data-page="agents">Strategies</a>
   <div class="group">• BROKER</div>
   <a href="#broker" data-page="broker">MetaTrader 5 <span id="navacct"></span></a>
   <div class="group">• APP</div>
@@ -274,15 +273,6 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
     <div id="agentsview"></div>
   </section>
 
-  <section id="agents" hidden>
-    <div class="sub" style="margin: -8px 0 14px">Each strategy is one way of spotting a trade. Turn on the ones you want; your safety limits still have the last word. Changes apply the next time the bot starts.</div>
-    <div class="gallery" id="agentlist"></div>
-    <div class="row" style="margin-top: 14px">
-      <div class="card" id="agent"></div>
-      <div class="card" style="flex: 0 1 380px"><div class="label" style="color: var(--accent)">• Its latest decisions</div><div class="feed" id="agentfeed"></div></div>
-    </div>
-  </section>
-
   <section id="setup" hidden>
     <div class="sub" style="margin: -8px 0 14px">Five steps, once. Each turns green when it is done; you can change all of it later.</div>
     <div class="steps" id="steps"></div>
@@ -317,9 +307,8 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
 <script>
 // [section, subtitle, [[key, kind, options, hint]]]; "choice" renders as buttons, like a segmented control.
 const FIELDS = [
-  ["Execution", "Mode, brain, market, size", [
+  ["Execution", "Mode, market, size", [
     ["MODE", "choice", ["demo", "live"], "demo trades only a demo account (it refuses a real one). live trades any account, real money included."],
-    ["BRAIN", "choice", ["rules", "ai", "hybrid"], "rules is free. ai decides every candle, hybrid only judges setups; both call the AI chosen under AI &amp; Telegram."],
     ["SYMBOL", "text", null, "Exactly as your broker names it (XAUUSD, XAUUSDm, GOLD ...)"],
     ["TIMEFRAME", "choice", ["M1", "M5", "M15", "M30", "H1", "H4", "D1"], "Candle size the bot decides on"],
     ["LOT", "number", null, "Size of every order"],
@@ -366,7 +355,7 @@ function aiRows(settings) {
     <div class="airow"><b>AI order</b><div class="order">${pick(0)}<span>›</span>${pick(1)}<span>›</span>${pick(2)}</div>
       <input type="hidden" id="AI_PROVIDER" name="AI_PROVIDER" value="${esc(order.join(","))}">
       <input type="hidden" name="AI_MODEL" value=""><!-- the old single model setting: each row's own model replaces it -->
-      <small>The 1st answers every call. Only if it fails (down, key rejected) does the 2nd try, then the 3rd. Used when BRAIN is ai or hybrid.</small></div>
+      <small>The 1st answers every call. Only if it fails (down, key rejected) does the 2nd try, then the 3rd. Used by agents whose analyst is "Your AI order".</small></div>
     ${AI.map(([id, label, key, model, site]) => `
     <div class="airow"><b>${label}</b>
       <div class="line"><input id="${key}" name="${key}" type="password" autocomplete="off" ${secret(key)}>
@@ -404,7 +393,7 @@ function showMode(settings) {
   timeframeNow = settings.TIMEFRAME;
   maxTrades = +settings.MAX_TRADES_PER_DAY || 0;
   for (const button of $("modes").children) button.classList.toggle("on", button.dataset.mode === mode);
-  $("where").textContent = `${settings.SYMBOL} · ${settings.TIMEFRAME} · brain ${settings.BRAIN}` + (mode === "live" ? " · REAL MONEY" : "");
+  $("where").textContent = `${settings.SYMBOL} · ${settings.TIMEFRAME}` + (mode === "live" ? " · REAL MONEY" : "");
 }
 
 $("modes").addEventListener("click", async (event) => {
@@ -596,7 +585,6 @@ $("range").addEventListener("click", (event) => {
   loadDashboard();
 });
 
-let agentList = [], picked = null;
 const plainReason = (reason) => String(reason ?? "").replace(/^(\w+): /, (whole, name) => PLAIN[name] ? plainName(name) + ": " : whole);
 const feedHtml = (items) => items.length ? items.map((d) => `
   <div class="item"><b class="${esc(d.action)}">${esc(d.action).toUpperCase()}</b><span class="sub">${when(d.at)} · ${esc(WHO[d.source] || d.source)}</span>
@@ -605,88 +593,26 @@ const feedHtml = (items) => items.length ? items.map((d) => `
 const WHO = { bot: "bot", replay: "past-price test", paper: "Paper", mt5: "Real or demo", rules: "Strategy", ai: "AI", hybrid: "Strategy + AI", webhook: "TradingView", telegram: "Telegram" };
 const OUTCOME = { sl: "Stop loss", tp: "Take profit", closed: "Closed by hand" };
 
-// Plain-English name, idea, exact rule (it must match strategies.py) and how many conditions must all agree.
-const PLAIN = {
-  ma_cross: ["Average crossover", "Follows the direction the average price turns. Trades the most often.",
-    "Buy when the 10-candle average price crosses above the 30-candle average. Sell on the opposite cross.", 1],
-  bollinger_breakout: ["Breakout after a quiet spell", "Waits for a calm, narrow market, then follows the price when it breaks out.",
-    "Buy when price closes above the Bollinger bands right after they had narrowed to half their recent width. Sell on a close below them.", 2],
-  rsi_reversion: ["Bounce after a big move", "When price has run too far too fast, bets on a bounce back.",
-    "Buy when RSI climbs back above 30 just after a close below the lower Bollinger band. Sell when RSI drops back below 70 after a close above the upper band.", 2],
-  trend_pullback: ["Buy the dip in a trend", "Trades with a clear trend, but only after a small step back.",
-    "Buy when the 50-candle average is rising, price dipped to the 20-candle average in the last 3 candles and now closes back above it on a green candle, with RSI between 40 and 65. Sell on the mirror image.", 5],
-  mr_zscore: ["Snap back to normal", "Only in calm, trendless markets: bets a stretched price returns to its average.",
-    "Buy when the bigger timeframe shows no trend and no volatility spike, price has stretched at least 2 ATR below its 20-candle average on a fresh move, and a candle then closes above the one before. Sell on the mirror image.", 6],
-};
+// Plain-English name, idea, exact rule and how many conditions must all agree: strategies.PLAIN, loaded at start.
+let PLAIN = {};
 const PICKY = ["", "trades most often", "trades often", "picky", "picky", "very picky", "very picky"];
 const pickyBars = (n) => [1, 2, 4, 6].map((step) => `<i class="${n >= step ? "lit" : ""}"></i>`).join("");
 const plainName = (name) => (PLAIN[name] || [name])[0];
-
-async function loadAgents() {
-  agentList = await api("/api/agents");
-  if (!agentList.some((a) => a.name === picked)) picked = (agentList.find((a) => a.armed) || agentList[0]).name;
-  const unit = { M: "m", H: "h", D: "d", W: "w" }[timeframeNow[0]];
-  const candleTag = () => unit ? timeframeNow.slice(1) + unit + " candles" : timeframeNow;  // M15 -> 15m candles
-  const order = Object.keys(PLAIN);  // least to most picky, like the cards on AutoBotSignal
-  $("agentlist").innerHTML = [...agentList].sort((x, y) => order.indexOf(x.name) - order.indexOf(y.name)).map((a) => {
-    const [name, idea, rule, conditions] = PLAIN[a.name] || [a.name, a.about, a.about, 0];
-    return `<div class="gcard ${a.name === picked ? "on" : ""}" data-name="${esc(a.name)}">
-      <div class="agent-head"><b>${esc(name)}</b><button class="switch ${a.armed ? "on" : ""}" data-arm="${esc(a.name)}" title="${a.armed ? "Turn off" : "Turn on"}"></button></div>
-      <div class="sub" style="margin: 6px 0 10px">${esc(idea)}</div>
-      <div class="rule">${esc(rule)}</div>
-      <div class="picky"><span class="label">How picky</span><b>${PICKY[conditions] || ""}</b></div>
-      <div class="bars">${pickyBars(conditions)}</div>
-      <div class="tags"><span>${esc(candleTag())}</span><span>${conditions} condition${conditions === 1 ? "" : "s"}</span>
-        <span>${a.totals.trades ? `won ${Math.round(a.totals.win_rate * 100)}% of ${a.totals.trades}` : "no record yet"}</span><span class="${a.armed ? "win" : ""}">${a.armed ? "On" : "Off"}</span></div>
-    </div>`;
-  }).join("");
-  const a = agentList.find((x) => x.name === picked), t = a.totals;
-  const verdict = t.trades >= 100 ? "Enough trades to judge it. Turning it on is still your call."
-    : t.trades >= 30 ? "Early results. Watch it a while longer before trusting it."
-    : "Too few trades to tell yet. Try it on past prices first (Advanced → Train AI).";
-  const tone = t.net > 0 ? "win" : t.net < 0 ? "loss" : "";
-  $("agent").innerHTML = `
-    <div><span class="label">Record of</span> <b style="font-size: 18px">${esc(plainName(a.name))}</b>
-      <span class="sub" style="font-size: 11px">· code name ${esc(a.name)}</span></div>
-    <div class="mini">
-      <div><b class="${tone}">${t.trades ? Math.round(t.win_rate * 100) + "%" : "—"}</b><span class="sub">of trades won (${t.wins} won, ${t.losses} lost)</span></div>
-      <div><b>${t.trades}</b><span class="sub">trades finished (${a.live_trades} paper or live, ${t.trades - a.live_trades} tested on past prices)</span></div>
-      <div><b class="${tone}">${money(t.net)}</b><span class="sub">total profit${t.profit_factor ? ` · makes $${t.profit_factor} for every $1 it loses` : ""}</span></div>
-      <div><b>${t.longest_losing_streak}</b><span class="sub">losses in a row at worst · biggest drop from a high: $${t.max_drawdown.toFixed(2)}</span></div>
-    </div>
-    <div class="ladder"><div class="label">How much to trust it</div><div class="meter"><i style="width: ${a.trust * 100}%"></i></div>
-      <div class="sub" style="margin-top: 8px"><b style="color: var(--text)">${t.trades} of 100 trades</b> · ${verdict}</div></div>`;
-  $("agentfeed").innerHTML = feedHtml(a.decisions);
-}
-
-$("agentlist").addEventListener("click", async (event) => {
-  const name = event.target.dataset.arm;
-  if (name) {  // the On/Off switch on a card
-    const a = agentList.find((x) => x.name === name);
-    try { showMode(await api("/api/agents/arm", { name, armed: !a.armed })); }
-    catch (error) { alert(error.message); }
-  } else {
-    const card = event.target.closest(".gcard");
-    if (!card) return;
-    picked = card.dataset.name;
-  }
-  loadAgents();
-});
 
 let sig = null, pickedSource = "webhook", sigFilter = "all";
 async function loadSignals() {
   sig = await api("/api/signals");
   const sources = [
-    ["strategies", "Strategies", `${sig.strategies.armed} of ${sig.strategies.total} armed · brain ${sig.strategies.brain}`, true],
+    ["agents", "AI agents", `${sig.agents.auto} of ${sig.agents.total} auto-trading`, sig.agents.auto > 0],
     ["webhook", "TradingView", sig.webhook.on ? "on · alerts via webhook" : "off · alerts from your charts", sig.webhook.on],
     ["telegram", "Telegram", sig.telegram.ready ? (sig.telegram.on ? "on · /buy and /sell" : "off · /buy and /sell") : "needs a Telegram bot first", sig.telegram.on],
   ];
   $("sourcelist").innerHTML = sources.map(([id, name, sub, on]) => `
     <div class="agent ${on ? "armed" : ""} ${id === pickedSource ? "on" : ""}" data-source="${id}"><b>${name}</b><div class="sub">${esc(sub)}</div></div>`).join("");
-  $("source").innerHTML = pickedSource === "strategies" ? `
-      <b style="font-size: 20px">Strategies</b>
-      <div class="sub" style="margin: 8px 0 14px">The bot's own setups, checked on every closed candle. ${sig.strategies.armed} of ${sig.strategies.total} are armed; the brain is <b>${esc(sig.strategies.brain)}</b>.</div>
-      <a class="ghost" href="#agents" style="text-decoration: none">Open Agents to arm or disarm</a>`
+  $("source").innerHTML = pickedSource === "agents" ? `
+      <b style="font-size: 20px">AI agents</b>
+      <div class="sub" style="margin: 8px 0 14px">Your agents decide on every closed candle of their markets. ${sig.agents.auto} of ${sig.agents.total} may trade (Auto-trade); the others only watch or suggest.</div>
+      <a class="ghost" href="#myagents" style="text-decoration: none">Open AI agents</a>`
     : pickedSource === "webhook" ? `
       <div class="agent-head"><div><b style="font-size: 20px">TradingView</b><div class="sub">Any TradingView alert becomes a trade signal</div></div>
         <button class="switch ${sig.webhook.on ? "on" : ""}" data-switch="webhook"></button></div>
@@ -864,14 +790,12 @@ $("loginform").addEventListener("submit", async (event) => {
 
 // --- Setup: the first-run checklist, also reachable any time from the sidebar ---
 async function setupState() {
-  const [acct, settings, bot] = await Promise.all([api("/api/broker"), api("/api/settings"), api("/api/bot")]);
-  if (acct.logged_in && !symbolNames) symbolNames = await api("/api/broker/symbols");
-  const symbolOk = acct.logged_in && symbolNames.includes(settings.SYMBOL);
-  return { acct, settings, bot, symbolOk, ready: acct.logged_in && symbolOk && bot.configured };
+  const [acct, settings, bot, mine] = await Promise.all([api("/api/broker"), api("/api/settings"), api("/api/bot"), api("/api/myagents")]);
+  return { acct, settings, bot, mine, ready: acct.logged_in && bot.configured && mine.length > 0 };
 }
 
 async function loadSetup() {
-  const { acct, settings, bot, symbolOk } = await setupState();
+  const { acct, settings, bot, mine } = await setupState();
   const install = acct.install || {};
   const steps = [
     // TradeBot's own portable MT5 is switched off for now: a copied terminal answers no Python IPC
@@ -901,10 +825,9 @@ async function loadSetup() {
       <div class="sub">Start on Demo: the bot trades a free demo account from your broker and refuses a real one. Move to Live once you trust its record.</div>
       <div class="picks">${[["demo", "Demo account (start here)"], ["live", "Live, real money"]].map(([value, label]) =>
         `<button class="${settings.MODE === value && bot.configured ? "save" : "ghost"}" data-mode="${value}">${label}</button>`).join("")}</div>`],
-    ["Pick what to trade", symbolOk, `
-      <div class="sub">Now set: <b>${esc(settings.SYMBOL)}</b>${acct.logged_in && !symbolOk ? " — your broker has no symbol with that name." : ""} Pick one your broker offers:</div>
-      <div class="picks">${(symbolNames || []).slice(0, 8).map((name) => `<button class="ghost" data-sym="${esc(name)}">${esc(name)}</button>`).join("")}</div>
-      <div class="sub" style="margin-top: 8px">Others: search them on the <a href="#broker" style="color: var(--accent)">MetaTrader 5</a> page.</div>`],
+    ["Make an agent", mine.length > 0, `
+      <div class="sub">Agents decide the trades: each watches the markets you pick and follows a strategy, a ready one or your own words. It starts in Watch only; switch it to Auto-trade when you trust it.</div>
+      <a class="save" href="#myagents" style="display: inline-block; margin-top: 10px; text-decoration: none">Make an agent</a>`],
     ["Start the bot", bot.running, `
       <div class="sub">It checks the market on every new candle and follows the risk limits in Settings. Stop it any time.</div>
       <button class="save" data-act="start" style="margin-top: 10px">Start the bot</button>`],
@@ -925,7 +848,6 @@ $("steps").addEventListener("click", async (event) => {
     else if (target.dataset.act === "own") await api("/api/broker/own", {});
     else if (target.dataset.act === "start") await api("/api/bot/start", {});
     else if (target.dataset.act === "open") await api("/api/broker/open", {});
-    else if (target.dataset.sym) showMode(await api("/api/settings", { SYMBOL: target.dataset.sym }));
     else if (target.dataset.mode) {
       if (target.dataset.mode === "live" && !confirm("Use your Live account? The bot will trade real money there.")) return;
       const settings = await api("/api/broker/mode", { mode: target.dataset.mode });  // also moves MT5 to that account
@@ -976,7 +898,7 @@ const analystName = (id) => ({ rules: "Built-in rules (free)", saved: "Your AI o
 
 function startWizard(agent) {
   draft = agent ? JSON.parse(JSON.stringify(agent)) : { name: "New agent", template: "", strategy: "", markets: [], timeframe: timeframeNow,
-    runs: "candle", every_minutes: 15, min_confidence: 60, mode: "watch", analyst: "saved" };
+    runs: "candle", every_minutes: 15, min_confidence: 60, mode: "watch", analyst: "rules" };
   wizStep = agent ? 1 : 0;
   renderWizard();
 }
@@ -991,6 +913,25 @@ function renderWizard() {
     ${wizStep ? `<div class="wiznav"><button class="ghost" data-goto="${wizStep - 1}">Back</button>
       ${wizStep < 4 ? `<button class="save" data-goto="${wizStep + 1}">Next: ${STEPS[wizStep + 1]}</button>` : `<button class="save" data-saveagent="1">Save agent</button>`}</div>` : ""}</div>`;
   if (wizStep === 1) loadMarkets();
+  showUnderstood();
+}
+
+// What the built-in analyst reads in the strategy text, refreshed as it is typed.
+let understoodTimer = null;
+function showUnderstood() {
+  clearTimeout(understoodTimer);
+  understoodTimer = setTimeout(async () => {
+    if (!$("understood")) return;
+    const got = await api("/api/myagents/understand", { strategy: draft.strategy, template: draft.template }).catch(() => null);
+    if (!got || !$("understood")) return;
+    const list = (items) => items.length ? items.map((item) => `<span>${esc(item)}</span>`).join("") : `<span class="sub">nothing</span>`;
+    $("understood").innerHTML = got.exact
+      ? `<div class="sub" style="margin-top: 10px">Built-in analyst: runs the <b>${esc(PLAIN[draft.template][0])}</b> setup exactly as written. Edit the words and it reads them instead.</div>`
+      : `<div class="label" style="margin-top: 12px">What the built-in analyst reads</div>
+        <div class="tags"><b style="min-width: 40px">Buy</b>${list(got.buy)}</div>
+        <div class="tags"><b style="min-width: 40px">Sell</b>${list(got.sell)}</div>
+        ${got.unknown.length ? `<div class="sub loss" style="margin-top: 6px">Not understood (that side will not trade): ${got.unknown.map(esc).join(" · ")}</div>` : ""}`;
+  }, 300);
 }
 
 const stepStart = () => `
@@ -1008,7 +949,8 @@ const stepWhat = () => `
   <div class="field"><label>Name</label><input data-f="name" value="${esc(draft.name)}"></div>
   <div class="field"><label>Strategy, in plain English</label>
     <textarea data-f="strategy" placeholder="Buy when EMA(9) crosses above EMA(21) and RSI is between 45 and 65.">${esc(draft.strategy)}</textarea>
-    <small>Enforced, whatever the analyst says: an RSI range you write ("RSI between 45 and 65") and the minimum confidence (next step). Lot size, stop loss and take profit always come from Settings.</small></div>
+    <small>Enforced, whatever the analyst says: an RSI range you write ("RSI between 45 and 65") and the minimum confidence (next step). Lot size, stop loss and take profit always come from Settings.</small>
+    <div id="understood"></div></div>
   <div class="field"><label>Markets (<span id="mcount">${draft.markets.length}</span> selected)</label>
     <input id="msearch" placeholder="Search markets, e.g. GOLD, EURUSD" value="${esc(marketQuery)}"><div class="chips" id="mchips">Loading the broker's markets…</div></div>`;
 
@@ -1025,9 +967,10 @@ const stepMayDo = () => `<div class="field"><label>What it may do</label><div cl
   `<button type="button" data-mode-pick="${id}" class="${draft.mode === id ? "on" : ""}"><b>${label}</b><span>${text}</span></button>`).join("")}</div></div>`;
 
 const stepAnalyst = () => `<div class="field"><label>Analyst</label><select data-f="analyst">
-  ${(draft.template ? ["rules"] : []).concat(["saved", "claude", "openai", "gemini"]).map((id) =>
+  ${["rules", "saved", "claude", "openai", "gemini"].map((id) =>
     `<option value="${id}" ${draft.analyst === id ? "selected" : ""}>${analystName(id)}${id === "saved" ? ` — ${esc(currentOrder())}` : ""}</option>`).join("")}</select>
-  <small>Built-in rules run the template's own conditions: free, same answer every time. An AI reads your strategy text and the market; each run costs a call, and the daily AI budget in Settings applies.</small></div>`;
+  <small>The built-in analyst reads your written rules and checks them on the broker's own candles: RSI, moving averages, MACD, Bollinger bands, candle patterns. It trades only when every rule of one side holds and the other side's does not; anything it cannot read, or anything ambiguous, is a hold. No account, no API key, works offline. An AI reads your text and the market instead; each run costs a call, and the daily AI budget in Settings applies.</small>
+  ${draft.analyst === "rules" ? `<div id="understood"></div>` : ""}</div>`;
 
 const currentOrder = () => ($("AI_PROVIDER")?.value || "claude").split(",").map((p) => ({ claude: "Claude", openai: "GPT", gemini: "Gemini" })[p] || p).join(" › ");
 
@@ -1044,13 +987,14 @@ async function loadMarkets() {
 $("agentsview").addEventListener("input", (event) => {
   const field = event.target.dataset.f;
   if (field) draft[field] = event.target.type === "number" ? +event.target.value : event.target.value;
+  if (field === "strategy") showUnderstood();
   if (event.target.id === "msearch") { marketQuery = event.target.value; loadMarkets(); }
 });
 $("agentsview").addEventListener("change", (event) => {
   const field = event.target.dataset.f;
   if (!field) return;
   draft[field] = event.target.type === "number" ? +event.target.value : event.target.value;
-  if (field === "runs") renderWizard();  // the timer's minutes field comes and goes
+  if (field === "runs" || field === "analyst") renderWizard();  // the timer's minutes and the analyst's reading come and go
 });
 $("agentsview").addEventListener("click", async (event) => {
   const el = event.target.closest("[data-new],[data-agent],[data-setmode],[data-edit],[data-delete],[data-template],[data-goto],[data-cancel],[data-saveagent],[data-market],[data-mode-pick]");
@@ -1072,8 +1016,7 @@ $("agentsview").addEventListener("click", async (event) => {
     if (d.agent && !draft) { pickedAgent = d.agent; return loadMyAgents(); }
     if (d.template !== undefined && wizStep === 0) {
       draft.template = d.template;
-      if (d.template) { draft.name = PLAIN[d.template][0]; draft.strategy = PLAIN[d.template][2]; draft.analyst = "rules"; }
-      else if (draft.analyst === "rules") draft.analyst = "saved";
+      if (d.template) { draft.name = PLAIN[d.template][0]; draft.strategy = PLAIN[d.template][2]; }
       wizStep = 1; return renderWizard();
     }
     if (d.market) {
@@ -1157,7 +1100,7 @@ setInterval(() => {  // live: the forming candle every 3 s, everything (new trad
   if (location.hash.startsWith("#price") && priceChart) loadPrice(Date.now() - lastFull > 30000);
 }, 3000);
 
-const PAGES = { dashboard: "Dashboard", price: "Chart", history: "History", signals: "Signals", myagents: "AI agents", agents: "Strategies", broker: "MetaTrader 5", setup: "Setup", settings: "Settings" };
+const PAGES = { dashboard: "Dashboard", price: "Chart", history: "History", signals: "Signals", myagents: "AI agents", broker: "MetaTrader 5", setup: "Setup", settings: "Settings" };
 function route() {
   const [wanted, sub] = location.hash.slice(1).split("/");  // #settings/ai opens that Settings section
   const page = wanted in PAGES ? wanted : "dashboard";
@@ -1171,7 +1114,6 @@ function route() {
   $("title").textContent = PAGES[page];
   if (page === "history") loadHistory();
   if (page === "price") loadPrice(true);
-  if (page === "agents") loadAgents();
   if (page === "myagents") loadMyAgents();
   if (page === "signals") loadSignals();
   if (page === "broker") { loadBroker(); loadSymbols(); }
@@ -1180,6 +1122,7 @@ function route() {
 addEventListener("hashchange", route);
 
 (async () => {
+  PLAIN = await api("/api/templates").catch(() => ({}));  // before any page names a strategy
   route();
   const settings = await api("/api/settings");
   showMode(settings); buildForm(settings);

@@ -1,7 +1,8 @@
 """User-made agents: a strategy in plain English, the markets it watches, and what it may do.
 
 Kept in agents.json next to the app; the bot re-reads it every loop, so a change applies at
-once. Each agent decides with a rules template (free) or an AI (Claude, GPT, Gemini), and then:
+once. Each agent decides with the built-in analyst (free: a template's own code, or plainrules.py
+reading the written rules) or an AI (Claude, GPT, Gemini), and then:
   watch   - records its calls, never trades
   suggest - records and announces them (Telegram, the app), never trades
   auto    - trades them, through exactly the same risk rules as everything else
@@ -15,6 +16,7 @@ import uuid
 
 import ai_strategy
 import indicators
+import plainrules
 import strategies
 from config import APP_DIR
 
@@ -101,13 +103,43 @@ def clean(raw):
         problems.append("what it may do: watch, suggest or auto")
     if agent["analyst"] not in ANALYSTS:
         problems.append("pick an analyst")
-    if agent["analyst"] == "rules" and not template:
-        problems.append("a blank strategy needs an AI analyst: rules only run a template")
+    if agent["analyst"] == "rules" and not runs_template(agent):
+        rules = plainrules.parse(text)
+        if not any(rules[side] and not rules["unknown"][side] for side in ("buy", "sell")):
+            problems.append("the built-in analyst cannot read a whole buy or sell rule here"
+                            + (f" (not understood: {'; '.join(sorted(set(rules['unknown']['buy'] + rules['unknown']['sell'])))})"
+                               if rules["unknown"]["buy"] or rules["unknown"]["sell"] else "")
+                            + ": rewrite it, or pick an AI analyst")
     if agent["analyst"] == "rules" and agent["runs"] == "timer":
         problems.append("rules run on closed candles only (a timer would repeat the same call)")
     if problems:
         raise ValueError("; ".join(problems))
     return agent
+
+
+def runs_template(agent):
+    """A template whose rule text is unchanged runs the template's own code, exactly; edited text is read instead."""
+    template = agent.get("template")
+    return template in strategies.PLAIN and agent.get("strategy", "").strip() in ("", strategies.PLAIN[template][2])
+
+
+def migrate(values, path=None):
+    """Once: the strategies the old Strategies page armed (STRATEGY in .env) become auto-trading agents
+    on the bot's market, added to any agents already made, so nothing that traded stops. values is
+    None on a fresh install (no .env yet): nothing to move. The bot itself no longer trades STRATEGY."""
+    path = path or AGENTS_PATH
+    marker = path.with_name("strategies.moved")
+    if marker.exists():
+        return []
+    made = [clean({
+        "name": strategies.PLAIN[name][0], "template": name, "strategy": strategies.PLAIN[name][2],
+        "markets": [values["SYMBOL"]], "timeframe": values["TIMEFRAME"], "mode": "auto",
+        "analyst": "rules" if values.get("BRAIN", "rules") == "rules" else "saved",  # ai / hybrid: the AI judges the setups
+    }) for name in (strategies.selected(values) if values else []) if name in strategies.STRATEGIES]
+    if made:
+        store(load(path) + made, path)
+    marker.write_text("STRATEGY moved into agents.json\n", encoding="utf-8")
+    return made
 
 
 def rsi_range(text):
@@ -145,11 +177,16 @@ def decide(agent, candles, config, journal_spent=0.0):
     a confidence under the minimum turns any call into a hold.
     """
     candidates = strategies.candidates(candles, dict(config, STRATEGY=agent["template"])) if agent["template"] else []
-    if agent["analyst"] == "rules":
+    if agent["analyst"] == "rules" and runs_template(agent):
         if not candidates:
             return None, 0, "no setup", 0.0
         name, signal, why = candidates[0]
         signal, confidence, reason, cost = signal, 100, f"{name}: {why}", 0.0
+    elif agent["analyst"] == "rules":
+        signal, why = plainrules.decide(agent["strategy"], candles)
+        if not signal:
+            return None, 0, why, 0.0
+        confidence, reason, cost = 100, "rules: " + why, 0.0
     else:
         if journal_spent >= config["AI_BUDGET_USD"]:
             return None, 0, f"AI budget for today spent (${journal_spent:.2f})", 0.0

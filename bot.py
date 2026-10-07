@@ -1,9 +1,9 @@
 """MT5 auto-trading bot controlled from Telegram.
 
 Run with the MT5 terminal open and logged in:  python bot.py
-Settings live in .env (copy .env.example). The rules live in strategies.py, the AI brain in
-ai_strategy.py, brain.py picks between them (BRAIN=rules | ai | hybrid), and every decision
-and trade goes into journal.db (journal.py).
+Settings live in .env (copy .env.example). It trades what the user's agents decide (agents.py,
+agents.json: strategy templates in strategies.py, written rules read by plainrules.py, or an AI)
+and the outside signals (TradingView, Telegram); every decision and trade goes into journal.db.
 
 Modes: dry trades on paper (virtual positions filled from the live candles, nothing is sent
 to the broker), demo and live send real orders. All three write the same journal, so the
@@ -325,46 +325,6 @@ def to_candles(rates):
     ]
 
 
-def check_market(config, state):
-    """Ask the brain once per newly closed candle."""
-    journal = state.get("journal")
-    paper = journal is not None and config["MODE"] == "dry"
-    timeframe = getattr(mt5, "TIMEFRAME_" + config["TIMEFRAME"])
-    rates = mt5.copy_rates_from_pos(config["SYMBOL"], timeframe, 0, brain.candles_needed(config) + 1)
-    if rates is None or len(rates) < 2:
-        return
-    closed_candles = to_candles(rates[:-1])  # the last row is still forming
-    candle = closed_candles[-1]
-    candle_time = candle["time"]
-    if candle_time == state["last_candle_time"]:
-        return
-    first_look = state["last_candle_time"] is None
-    state["last_candle_time"] = candle_time
-    if first_look:
-        return  # never trade a candle that closed before the bot started
-    tick = mt5.symbol_info_tick(config["SYMBOL"])
-    symbol_info = mt5.symbol_info(config["SYMBOL"])
-    if tick is None or symbol_info is None:
-        return remember(state, "skipped: no price from MT5")
-    if paper:
-        settle_paper(config, state, candle, symbol_info)
-    age = tick.time - candle_time
-    if age > STALE_CANDLES * candle_seconds(config):
-        return remember(state, f"skipped: candle closed {age // 60} min ago, the market was shut")
-    blocked, spread_points = current_block(config, state, tick, symbol_info)
-    if blocked:
-        return remember(state, "skipped: " + blocked)  # checked first: a blocked candle costs no AI call
-    experience = journal.experience_text() if journal and brain.learns(config) else ""
-    signal, reason, cost = brain.decide(closed_candles, config, experience)
-    if journal:
-        journal.record_decision("bot", state["run"], "decide", candle_time, signal or "hold", reason, cost)
-    remember(state, f"{signal or 'hold'}: {reason}")
-    if signal:
-        # the AI call can take a while, so price the order from a fresh tick
-        open_trade(config, state, signal, reason, closed_candles, mt5.symbol_info_tick(config["SYMBOL"]) or tick,
-                   symbol_info, spread_points, config["BRAIN"])
-
-
 def current_block(config, state, tick, symbol_info):
     """(why no new trade is allowed now or None, spread in points): the risk rules every signal passes."""
     journal = state.get("journal")
@@ -541,7 +501,6 @@ def main():
             raise SystemExit(error)
         state = {
             "paused": False,
-            "last_candle_time": None,
             "update_offset": 0,
             "journal": journal,
             "run": f"{config['MODE']}-{datetime.now():%Y%m%d-%H%M%S}",
@@ -560,7 +519,6 @@ def main():
             if ensure_connected(config, state):
                 if config["MODE"] != "dry":
                     settle_mt5(config, state)
-                check_market(config, state)
                 outside_signals(config, state)
                 run_agents(config, state)
             time.sleep(POLL_SECONDS)

@@ -31,7 +31,7 @@ LOG_PATH = APP_DIR / "bot.log"
 SECRETS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "TELEGRAM_TOKEN")  # never sent to the page, only "set" or not
 # ponytail: one loop of the bot (an AI call included) must finish within this, or it shows as stopped
 ALIVE_SECONDS = 120
-SAVE_LOCK = threading.RLock()  # re-entrant: arm() and switch_source() hold it around save_settings()
+SAVE_LOCK = threading.RLock()  # re-entrant: switch_source() holds it around save_settings()
 BOT_LOCK = threading.Lock()
 bot_process = None  # the bot this dashboard started, if any
 
@@ -113,55 +113,14 @@ def dashboard(journal, days, now=None):
     }
 
 
-TRUST_TRADES = 100  # closed trades before a record is worth judging, the Trust Ladder's top
-
-
-def agents(journal, config):
-    """One card per strategy: armed or not, its record, and its latest decisions.
-
-    Trades are matched by the "name: reason" text the rules brain writes; the AI brains
-    word their own reasons, so their trades show up under no strategy.
-    """
-    from strategies import STRATEGIES, selected  # here: strategies imports config, keep ui light at import
-    armed = set(selected(config))
-    trades = journal.closed_trades()
-    decisions = journal._rows("SELECT at, action, reason, source FROM decisions WHERE kind = 'decide' ORDER BY id DESC LIMIT 500")
-    cards = []
-    for name, function in STRATEGIES.items():
-        mine = [trade for trade in trades if (trade["reason"] or "").startswith(name + ":")]
-        live = [trade for trade in mine if trade["source"] != "replay"]
-        cards.append({
-            "name": name,
-            "about": (function.__doc__ or "").strip().splitlines()[0] if function.__doc__ else "",
-            "armed": name in armed,
-            "totals": summarize(mine),
-            "live_trades": len(live),
-            "trust": min(1.0, len(mine) / TRUST_TRADES),
-            "decisions": [d for d in decisions if (d["reason"] or "").startswith(name + ":")][:20],
-        })
-    return cards
-
-
-def arm(name, armed, path=ENV_PATH):
-    """Add or remove one strategy from STRATEGY in .env."""
-    from strategies import STRATEGIES, selected
-    if name not in STRATEGIES:
-        raise ValueError(f"unknown strategy {name}")
-    with SAVE_LOCK:  # read and write as one step: two quick arms must both stick
-        names = [n for n in selected(read_env(path)) if n != name] + ([name] if armed else [])
-        if not names:
-            raise ValueError("keep at least one strategy armed, or Stop the bot instead")
-        ordered = [n for n in STRATEGIES if n in names]
-        save_settings({"STRATEGY": "all" if len(ordered) == len(STRATEGIES) else ",".join(ordered)}, path)
-
-
 def signal_sources(journal, path=ENV_PATH):
     """The Signals page: each source's switch and setup, and every outside signal on record."""
+    import agents
     import signals
-    from strategies import STRATEGIES, selected
     values = read_env(path)
+    mine = agents.load(path.with_name("agents.json"))
     return {
-        "strategies": {"armed": len(selected(values)), "total": len(STRATEGIES), "brain": values["BRAIN"]},
+        "agents": {"auto": sum(a["mode"] == "auto" for a in mine), "total": len(mine)},
         "webhook": {"on": values["SIGNAL_WEBHOOK"] == "on", "url": signals.webhook_url(values["WEBHOOK_TOPIC"]) if values["WEBHOOK_TOPIC"] else ""},
         "telegram": {"on": values["SIGNAL_TELEGRAM"] == "on", "ready": bool(values["TELEGRAM_TOKEN"] and values["TELEGRAM_CHAT_ID"])},
         "history": journal._rows(
@@ -270,6 +229,14 @@ def set_agent_mode(agent_id, mode, path=None):
         if not found:
             raise ValueError("no such agent")
         return save_agent(dict(found[0], mode=mode), path)
+
+
+def understand(raw):
+    """What the built-in analyst reads in the wizard's strategy text, shown as it is typed."""
+    import agents
+    import plainrules
+    text = str(raw.get("strategy") or "")
+    return dict(plainrules.summary(text), exact=agents.runs_template({"template": raw.get("template") or "", "strategy": text}))
 
 
 def delete_agent(agent_id, path=None):
@@ -471,12 +438,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, my_agents(journal))
             finally:
                 journal.close()
-        if url.path == "/api/agents":
-            journal = Journal(JOURNAL_PATH)
-            try:
-                return self.reply(200, agents(journal, read_env()))
-            finally:
-                journal.close()
+        if url.path == "/api/templates":  # the agent wizard's ready strategies
+            return self.reply(200, __import__("strategies").PLAIN)
         if url.path == "/api/settings":
             return self.reply(200, public_settings())
         if url.path == "/api/bot":
@@ -507,7 +470,6 @@ class Handler(BaseHTTPRequestHandler):
             "/api/settings": lambda: (save_settings(body), public_settings())[1],
             "/api/bot/start": lambda: (start_bot(), bot_status())[1],
             "/api/bot/stop": lambda: (stop_bot(), bot_status())[1],
-            "/api/agents/arm": lambda: (arm(body.get("name"), bool(body.get("armed"))), public_settings())[1],
             "/api/signals/switch": lambda: (switch_source(body.get("source"), bool(body.get("on"))), public_settings())[1],
             "/api/signals/rotate": lambda: (rotate_topic(), public_settings())[1],
             "/api/signals/ping": lambda: (ping_webhook(), {"sent": True})[1],
@@ -517,6 +479,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/myagents/save": lambda: save_agent(body),
             "/api/myagents/mode": lambda: set_agent_mode(body.get("id"), body.get("mode")),
             "/api/myagents/delete": lambda: (delete_agent(body.get("id")), {"deleted": True})[1],
+            "/api/myagents/understand": lambda: understand(body),
             "/api/app/show": lambda: (show_window and show_window(), {"shown": bool(show_window)})[1],
             "/api/broker/install": lambda: (mt5_call("start_install"), {"started": True})[1],
             "/api/broker/mode": lambda: switch_mode(body.get("mode")),
@@ -692,6 +655,10 @@ def main():
             return
         server = None
     else:
+        try:  # once: the strategies the old Strategies page armed become agents, before the bot starts
+            __import__("agents").migrate(read_env() if ENV_PATH.exists() else None)
+        except Exception as error:  # a bad .env must not keep the window from opening
+            print("could not move the armed strategies into agents:", error)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         threading.Thread(target=run_watchdog, daemon=True).start()
         start_app_bot()

@@ -43,6 +43,47 @@ class CleanTest(unittest.TestCase):
             self.assertEqual(agents.load(path)[0]["name"], "Gold dip")
 
 
+class BuiltInAnalystTest(unittest.TestCase):
+    def test_unchanged_template_runs_its_code_and_edited_words_are_read(self):
+        text = agents.strategies.PLAIN["trend_pullback"][2]
+        self.assertTrue(agents.runs_template({"template": "trend_pullback", "strategy": text}))
+        self.assertFalse(agents.runs_template({"template": "trend_pullback", "strategy": text + " Only on Mondays."}))
+        written = agents.clean(dict(GOOD, template="", strategy="Buy when the 10-candle average crosses above the 30-candle average."))
+        signal, confidence, reason, cost = agents.decide(written, candles(CROSS_UP)[:-1], CONFIG)
+        self.assertEqual((signal, confidence, reason, cost), ("buy", 100, "rules: SMA(10) crosses above SMA(30)", 0.0))
+
+    def test_rules_it_cannot_read_are_refused_with_what_to_fix(self):
+        with self.assertRaises(ValueError) as caught:
+            agents.clean(dict(GOOD, template="", strategy="Buy when the moon is full."))
+        self.assertIn("not understood: the moon is full", str(caught.exception))
+
+
+class MigrateTest(unittest.TestCase):
+    def test_armed_strategies_become_auto_agents_once(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, "agents.json")
+            agents.store([agents.clean(GOOD)], path)  # one the user made already stays
+            values = dict(SYMBOL="GOLD", TIMEFRAME="M15", BRAIN="rules", STRATEGY="ma_cross,rsi_reversion")
+            made = agents.migrate(values, path)
+            self.assertEqual([(a["template"], a["markets"], a["mode"], a["analyst"]) for a in made],
+                             [("ma_cross", ["GOLD"], "auto", "rules"), ("rsi_reversion", ["GOLD"], "auto", "rules")])
+            self.assertTrue(all(agents.runs_template(a) for a in made))  # they trade exactly as before
+            self.assertEqual(len(agents.load(path)), 3)
+            self.assertEqual(agents.migrate(values, path), [])  # only once
+            self.assertEqual(len(agents.load(path)), 3)
+
+    def test_fresh_install_and_ai_brain(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, "agents.json")
+            self.assertEqual(agents.migrate(None, path), [])  # no .env yet: nothing to move, and never later
+            self.assertFalse(path.exists())
+            self.assertEqual(agents.migrate(dict(SYMBOL="GOLD", TIMEFRAME="M15", STRATEGY="ma_cross"), path), [])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, "agents.json")
+            (made,) = agents.migrate(dict(SYMBOL="GOLD", TIMEFRAME="H1", BRAIN="hybrid", STRATEGY="ma_cross"), path)
+            self.assertEqual((made["analyst"], made["timeframe"]), ("saved", "H1"))  # the AI still judges the setups
+
+
 class RsiRangeTest(unittest.TestCase):
     def test_reads_the_ranges_people_write(self):
         self.assertEqual(agents.rsi_range("Buy when EMA(9) crosses EMA(21) and RSI is between 45 and 65."), (45, 65))
@@ -69,8 +110,9 @@ class DecideTest(unittest.TestCase):
         self.assertTrue(reason.startswith("ma_cross"))
 
     def test_rsi_range_in_the_text_is_enforced(self):
-        agent = agents.clean(dict(GOOD, strategy="Only when RSI is between 10 and 20."))
-        signal, _, reason, _ = agents.decide(agent, candles(CROSS_UP)[:-1], self.config)
+        agent = agents.clean(dict(GOOD, strategy="Buy strength. Only when RSI is between 10 and 20.", analyst="claude"))
+        with mock.patch.object(agents.ai_strategy, "ask", return_value=({"action": "buy", "confidence": 90, "reason": "up"}, None, 0.01)):
+            signal, _, reason, _ = agents.decide(agent, candles(CROSS_UP)[:-1], self.config)
         self.assertIsNone(signal)
         self.assertIn("outside your 10-20", reason)
 
