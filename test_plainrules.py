@@ -50,7 +50,8 @@ class DecideTest(unittest.TestCase):
         text = strategies.PLAIN["ma_cross"][2]
         closed = candles(CROSS_UP)[:-1]
         self.assertEqual(plainrules.decide(text, closed)[0], strategies.ma_cross(closed, {})[0])
-        self.assertEqual(plainrules.decide(text, candles(FLAT)[:-1]), (None, "rules not met"))
+        self.assertEqual(plainrules.decide(text, candles(FLAT)[:-1]), (None, "waiting: buy needs SMA(10) crosses above SMA(30);"
+                                                                         " sell needs SMA(10) crosses below SMA(30)"))
 
     def test_trades_one_side_only(self):
         rising = bars([100 + i for i in range(60)])
@@ -66,7 +67,7 @@ class DecideTest(unittest.TestCase):
         self.assertIsNone(plainrules.decide("Sell on a red candle.", engulf)[0])
 
     def test_too_little_history_reads_as_no(self):
-        self.assertEqual(plainrules.decide("Buy when price is above EMA 200.", bars([1.0] * 10)), (None, "rules not met"))
+        self.assertEqual(plainrules.decide("Buy when price is above EMA 200.", bars([1.0] * 10)), (None, "waiting: buy needs price above EMA(200)"))
 
 
 if __name__ == "__main__":

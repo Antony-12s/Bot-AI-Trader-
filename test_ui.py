@@ -229,11 +229,43 @@ class MyAgentsTest(unittest.TestCase):
         self.assertEqual((card["totals"]["trades"], card["totals"]["net"]), (1, 3.0))
         self.assertEqual(len(card["decisions"]), 1)
 
-    def test_wizard_shows_what_the_built_in_analyst_reads(self):
+    def test_wizard_shows_what_the_built_in_analyst_reads_and_what_ai_costs(self):
         import strategies
-        self.assertTrue(ui.understand({"template": "mr_zscore", "strategy": strategies.PLAIN["mr_zscore"][2]})["exact"])
-        got = ui.understand({"template": "", "strategy": "Buy when RSI is below 30 and the moon is full."})
-        self.assertEqual((got["exact"], got["buy"], got["unknown"]), (False, ["RSI below 30"], ["the moon is full"]))
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(ui, "JOURNAL_PATH", Path(folder, "journal.db")):
+            self.assertTrue(ui.understand({"template": "mr_zscore", "strategy": strategies.PLAIN["mr_zscore"][2]})["exact"])
+            got = ui.understand({"template": "", "strategy": "Buy when RSI is below 30 and the moon is full."})
+            self.assertEqual((got["exact"], got["buy"], got["unknown"]), (False, ["RSI below 30"], ["the moon is full"]))
+            self.assertEqual(got["per_call"], ui.AI_CALL_GUESS)  # no AI calls on record yet
+            journal = Journal(Path(folder, "journal.db"))
+            for cost in (0.002, 0.004):
+                journal.record_decision("agent:a", "r", "agent", 1, "hold", "GOLD · 90% · AI: x", cost)
+            journal.record_decision("bot", "r", "decide", 1, "hold", "x", 1.0)  # not an agent's: left out
+            journal.close()
+            self.assertEqual(ui.understand({"strategy": "x"})["per_call"], 0.003)
+
+    def test_cards_show_each_markets_latest_call(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, "agents.json")
+            agent = ui.save_agent({"name": "A", "template": "ma_cross", "markets": ["GOLD", "EURUSD", "XAUEUR"]}, path)
+            journal = Journal()
+            for at, market, why in ((1, "GOLD", "old"), (2, "EURUSD", "eur"), (3, "GOLD", "new"), (4, "SILVER", "dropped market")):
+                journal.record_decision("agent:" + agent["id"], "r", "agent", at, "hold", f"{market} · 0% · {why}")
+            (card,) = ui.my_agents(journal, path)
+        self.assertEqual([(l["market"], l["reason"]) for l in card["latest"]], [("GOLD", "GOLD · 0% · new"), ("EURUSD", "EURUSD · 0% · eur")])
+
+    def test_backtest_trades_the_agent_on_past_candles_for_free(self):
+        from test_bot import CROSS_UP, candles
+        bars = candles([2650.0] * 300 + CROSS_UP + [2660.0] * 20)[:-1]
+        history = mock.Mock(return_value=(bars, 2, 100))
+        raw = {"name": "A", "template": "ma_cross", "markets": ["GOLD"], "timeframe": "M15", "analyst": "claude"}
+        with tempfile.TemporaryDirectory() as folder:
+            result = ui.backtest(raw, Path(folder, ".env"), history)
+        history.assert_called_once_with("GOLD", "M15", ui.BACKTEST_CANDLES)
+        (market,) = result["markets"]
+        self.assertEqual((market["market"], market["candles"], market["totals"]["trades"]), ("GOLD", len(bars), 1))
+        self.assertEqual(result["total"]["trades"], 1)
+        with self.assertRaisesRegex(ValueError, "cannot test this one for free"):
+            ui.backtest(dict(raw, template="", strategy="Buy when the moon is full."), Path(folder, ".env"), history)
 
 
 class TelegramTestTest(unittest.TestCase):

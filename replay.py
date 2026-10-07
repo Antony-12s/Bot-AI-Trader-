@@ -58,9 +58,12 @@ def read_candles(path, default_spread=30):
     return candles, digits
 
 
-def replay(candles, config, journal, run, digits, log=print):
-    """Trade the candles on paper. Returns why it stopped: "end", "budget" or "ai failures"."""
+def replay(candles, config, journal, run, digits, log=print, decide=None):
+    """Trade the candles on paper. Returns why it stopped: "end", "budget" or "ai failures".
+
+    decide(window) -> (signal, reason, cost) replaces the brain, e.g. an agent's analyst (ui.backtest)."""
     needed = brain.candles_needed(config)
+    learns = brain.learns(config) and decide is None
     point = 10 ** -digits
     position = None
     failures = 0
@@ -83,9 +86,9 @@ def replay(candles, config, journal, run, digits, log=print):
         if blocked:
             continue
         window = candles[index + 1 - needed:index + 1]
-        experience = journal.experience_text() if brain.learns(config) else ""
-        signal, reason, cost = brain.decide(window, config, experience)
-        if brain.learns(config):
+        experience = journal.experience_text() if learns else ""
+        signal, reason, cost = decide(window) if decide else brain.decide(window, config, experience)
+        if learns:
             failures = failures + 1 if reason.startswith("AI error") else 0
         journal.record_decision("replay", run, "decide", candle["time"], signal or "hold", reason, cost)
         if failures >= MAX_AI_FAILURES:

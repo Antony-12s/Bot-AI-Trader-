@@ -204,9 +204,14 @@ def my_agents(journal, path=None):
         source = "agent:" + agent["id"]
         trades = [t for t in journal.closed_trades() if t["brain"] == source]
         calls = journal._rows("SELECT at, action, reason FROM decisions WHERE source = ? AND kind = 'agent'"
-                              " ORDER BY id DESC LIMIT 20", (source,))
+                              " ORDER BY id DESC LIMIT 200", (source,))
+        latest = {}  # market -> its newest call; reasons read "GOLD · 90% · why"
+        for call in calls:
+            market = (call["reason"] or "").split(" · ")[0]
+            if market in agent["markets"]:
+                latest.setdefault(market, call)
         cards.append(dict(agent, totals=summarize(trades), open=len([t for t in journal.open_trades() if t["brain"] == source]),
-                          decisions=calls))
+                          decisions=calls[:20], latest=[dict(latest[m], market=m) for m in agent["markets"] if m in latest]))
     return cards
 
 
@@ -236,7 +241,54 @@ def understand(raw):
     import agents
     import plainrules
     text = str(raw.get("strategy") or "")
-    return dict(plainrules.summary(text), exact=agents.runs_template({"template": raw.get("template") or "", "strategy": text}))
+    journal = Journal(JOURNAL_PATH)
+    try:  # what one agent AI call has cost lately; a first-time guess until there are some
+        (row,) = journal._rows("SELECT AVG(cost_usd) AS avg FROM (SELECT cost_usd FROM decisions WHERE source LIKE 'agent:%'"
+                               " AND cost_usd > 0 ORDER BY id DESC LIMIT 200)")
+    finally:
+        journal.close()
+    return dict(plainrules.summary(text), exact=agents.runs_template({"template": raw.get("template") or "", "strategy": text}),
+                per_call=round(row["avg"] or AI_CALL_GUESS, 5), budget=float(read_env()["AI_BUDGET_USD"] or 0))
+
+
+AI_CALL_GUESS = 0.004  # USD per agent AI call before any were made: measured 0.0034 with Claude on 2026-10-07
+BACKTEST_CANDLES = 3000  # per market: about a month of M15. ponytail: raise it if results come out too thin
+
+
+def backtest(raw, path=ENV_PATH, history=lambda *a: mt5_call("history", *a)):
+    """The wizard's "Test on past prices": the agent over each market's recent candles, on paper, free.
+
+    Fills, stops, lot and daily limits come from Settings, as in replay.py. An AI agent is tested with
+    the built-in analyst: its own AI would cost one call per candle, so its live calls can differ."""
+    import agents
+    import replay
+    try:
+        agent = agents.clean(dict(raw, analyst="rules", runs="candle", min_confidence=0))
+    except ValueError as error:
+        raise ValueError(f"cannot test this one for free: {error}") from None
+    try:
+        config = load_config(path)
+    except SystemExit as error:
+        raise ValueError(str(error)) from None
+    results, everything = [], []
+    for market in agent["markets"]:
+        bars, digits, contract = history(market, agent["timeframe"], BACKTEST_CANDLES)
+        market_config = dict(config, SYMBOL=market, TIMEFRAME=agent["timeframe"], BRAIN="rules",
+                             CONTRACT_SIZE=contract or config["CONTRACT_SIZE"])
+        journal = Journal()
+        try:
+            replay.replay(bars, market_config, journal, "test", digits, log=lambda line: None,
+                          decide=lambda window: (lambda signal, _, reason, cost: (signal, reason, cost))(
+                              *agents.decide(agent, window, market_config)))
+            trades = journal.closed_trades(run="test")
+        finally:
+            journal.close()
+        everything += trades
+        limit = config["MAX_SPREAD_POINTS"]  # the bot skips wider spreads, live and here: say so, or 0 trades looks like a bug
+        results.append({"market": market, "from": bars[0]["time"], "to": bars[-1]["time"], "candles": len(bars),
+                        "totals": summarize(trades), "spread_limit": limit,
+                        "too_wide": round(sum(bar["spread"] > limit for bar in bars) / len(bars), 2) if limit else 0})
+    return {"markets": results, "total": summarize(everything)}
 
 
 def delete_agent(agent_id, path=None):
@@ -438,6 +490,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, my_agents(journal))
             finally:
                 journal.close()
+        if url.path == "/api/broker/markets":  # the agent wizard's picker: names with what each one is
+            return self.reply(200, mt5_call("markets"))
         if url.path == "/api/templates":  # the agent wizard's ready strategies
             return self.reply(200, __import__("strategies").PLAIN)
         if url.path == "/api/settings":
@@ -480,6 +534,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/myagents/mode": lambda: set_agent_mode(body.get("id"), body.get("mode")),
             "/api/myagents/delete": lambda: (delete_agent(body.get("id")), {"deleted": True})[1],
             "/api/myagents/understand": lambda: understand(body),
+            "/api/myagents/backtest": lambda: backtest(body),
             "/api/app/show": lambda: (show_window and show_window(), {"shown": bool(show_window)})[1],
             "/api/broker/install": lambda: (mt5_call("start_install"), {"started": True})[1],
             "/api/broker/mode": lambda: switch_mode(body.get("mode")),

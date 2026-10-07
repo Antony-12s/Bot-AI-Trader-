@@ -114,6 +114,11 @@ code { background: var(--bg); padding: 1px 6px; border-radius: 6px; color: var(-
 .chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 220px; overflow: auto; margin-top: 8px; }
 .chips button { background: var(--panel2); color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
 .chips button.on { color: var(--accent); border-color: var(--accent); background: #24170a; }
+.chips small { margin-left: 6px; font-size: 10px; padding: 1px 6px; border-radius: 6px; background: var(--bg); color: var(--muted); }
+.chips small.k-metal { color: #facc15; } .chips small.k-stock, .chips small.k-etf { color: #f87171; } .chips small.k-forex { color: #60a5fa; } .chips small.k-crypto { color: #c084fc; }
+.latest { margin-top: 10px; display: grid; gap: 4px; font-size: 12px; }
+.bt { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+.bt td, .bt th { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; }
 .modecards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
 .modecards button { text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 14px; font: inherit; cursor: pointer; }
 .modecards button.on { border-color: var(--accent); background: #24170a; }
@@ -886,6 +891,8 @@ async function loadMyAgents() {
         <div class="rule">${esc(a.strategy || (PLAIN[a.template] || [])[2] || "")}</div>
         <div class="tags">${a.markets.slice(0, 4).map((m) => `<span>${esc(m)}</span>`).join("")}${a.markets.length > 4 ? `<span>+${a.markets.length - 4}</span>` : ""}
           <span>${esc(analystName(a.analyst))}</span><span>${a.totals.trades ? `won ${Math.round(a.totals.win_rate * 100)}% of ${a.totals.trades}` : "no trades yet"}</span></div>
+        <div class="latest">${(a.latest || []).map((l) => `<div class="sub"><b style="color: var(--text)">${esc(l.market)}</b> · ${when(l.at)} · <b class="${esc(l.action)}">${esc(l.action)}</b> ${esc((l.reason || "").split(" · ").slice(2).join(" · "))}</div>`).join("")
+          || `<div class="sub">No checks yet: it decides each time a ${esc(a.timeframe)} candle closes, while the bot runs.</div>`}</div>
         <div class="seg" style="margin-top: 12px">${MODES.map(([id, label]) => `<button type="button" data-setmode="${id}" class="${a.mode === id ? "on" : ""}">${label}</button>`).join("")}</div>
         <div style="display: flex; gap: 8px; margin-top: 10px"><button class="ghost" data-edit="1">Edit</button><button class="ghost" data-delete="1">Delete</button></div>
       </div>`).join("")}</div>
@@ -921,9 +928,12 @@ let understoodTimer = null;
 function showUnderstood() {
   clearTimeout(understoodTimer);
   understoodTimer = setTimeout(async () => {
-    if (!$("understood")) return;
+    if (!$("understood") && !$("costest")) return;
     const got = await api("/api/myagents/understand", { strategy: draft.strategy, template: draft.template }).catch(() => null);
-    if (!got || !$("understood")) return;
+    if (!got) return;
+    costInfo = got;
+    if ($("costest")) $("costest").innerHTML = costLine();
+    if (!$("understood")) return;
     const list = (items) => items.length ? items.map((item) => `<span>${esc(item)}</span>`).join("") : `<span class="sub">nothing</span>`;
     $("understood").innerHTML = got.exact
       ? `<div class="sub" style="margin-top: 10px">Built-in analyst: runs the <b>${esc(PLAIN[draft.template][0])}</b> setup exactly as written. Edit the words and it reads them instead.</div>`
@@ -970,16 +980,36 @@ const stepAnalyst = () => `<div class="field"><label>Analyst</label><select data
   ${["rules", "saved", "claude", "openai", "gemini"].map((id) =>
     `<option value="${id}" ${draft.analyst === id ? "selected" : ""}>${analystName(id)}${id === "saved" ? ` — ${esc(currentOrder())}` : ""}</option>`).join("")}</select>
   <small>The built-in analyst reads your written rules and checks them on the broker's own candles: RSI, moving averages, MACD, Bollinger bands, candle patterns. It trades only when every rule of one side holds and the other side's does not; anything it cannot read, or anything ambiguous, is a hold. No account, no API key, works offline. An AI reads your text and the market instead; each run costs a call, and the daily AI budget in Settings applies.</small>
-  ${draft.analyst === "rules" ? `<div id="understood"></div>` : ""}</div>`;
+  ${draft.analyst === "rules" ? `<div id="understood"></div>` : ""}<div id="costest" class="sub" style="margin-top: 10px"></div></div>
+  <div class="field" style="margin-top: 16px"><label>Test on past prices</label>
+    <div class="sub">Runs this agent over about the last ${BACKTEST_BARS} candles of each market, on paper, with your lot, stops and limits from Settings. Free.${draft.analyst === "rules" ? "" : " An AI agent is tested with the built-in analyst reading its text: its AI may decide differently."} Past results do not promise future ones.</div>
+    <button class="ghost" type="button" data-backtest="1" style="margin-top: 8px">Test it</button><div id="btresult"></div></div>`;
+const BACKTEST_BARS = 3000;  // ui.BACKTEST_CANDLES
+const TF_MINUTES = { M1: 1, M5: 5, M15: 15, M30: 30, H1: 60, H4: 240, D1: 1440 };
+let costInfo = null;
+function costLine() {
+  if (!costInfo) return "";
+  const readable = costInfo.exact || ((costInfo.buy.length || costInfo.sell.length) && !costInfo.unknown.length);
+  if (draft.analyst === "rules") return "Cost: free, the built-in analyst calls no AI.";
+  const minutes = draft.runs === "timer" ? draft.every_minutes : TF_MINUTES[draft.timeframe];
+  const perHour = draft.markets.length * 60 / minutes, usd = perHour * costInfo.per_call;
+  const hours = costInfo.budget > 0 && usd > 0 ? costInfo.budget / usd : Infinity;
+  return `<b>Cost:</b> about ${Math.round(perHour)} AI calls an hour (${draft.markets.length} market${draft.markets.length === 1 ? "" : "s"}, every ${minutes} min) ≈ $${usd.toFixed(2)} an hour.`
+    + (hours < 24 ? ` <span class="loss">The daily AI budget ($${costInfo.budget}) runs out after about ${hours.toFixed(1)} hours; then it holds until tomorrow.</span>` : "")
+    + (readable ? ` <b>The built-in analyst can read all of this strategy: it would decide the same rules for free.</b>` : "");
+}
 
 const currentOrder = () => ($("AI_PROVIDER")?.value || "claude").split(",").map((p) => ({ claude: "Claude", openai: "GPT", gemini: "Gemini" })[p] || p).join(" › ");
 
 async function loadMarkets() {
-  try { marketNames = marketNames || await api("/api/broker/symbols"); } catch { marketNames = []; }
-  const names = marketNames.length ? marketNames : [...new Set([...(draft.markets || []), (await api("/api/settings")).SYMBOL])];
+  try { marketNames = marketNames || await api("/api/broker/markets"); } catch { marketNames = []; }
+  const kinds = Object.fromEntries(marketNames);  // name -> Metal, Forex, Stock, ... from the broker's own folders
+  const names = marketNames.length ? marketNames.map(([name]) => name) : [...new Set([...(draft.markets || []), (await api("/api/settings")).SYMBOL])];
   const q = marketQuery.toUpperCase();
-  const shown = [...draft.markets, ...names.filter((n) => !draft.markets.includes(n) && n.toUpperCase().includes(q))].slice(0, 120);
-  if ($("mchips")) $("mchips").innerHTML = shown.map((n) => `<button type="button" data-market="${esc(n)}" class="${draft.markets.includes(n) ? "on" : ""}">${esc(n)}</button>`).join("")
+  const matches = (n) => n.toUpperCase().includes(q) || (kinds[n] || "").toUpperCase().includes(q);  // "metal" finds every metal
+  const shown = [...draft.markets, ...names.filter((n) => !draft.markets.includes(n) && matches(n))].slice(0, 120);
+  if ($("mchips")) $("mchips").innerHTML = shown.map((n) => `<button type="button" data-market="${esc(n)}" class="${draft.markets.includes(n) ? "on" : ""}">${esc(n)}${
+    kinds[n] ? `<small class="k-${esc(kinds[n].toLowerCase())}">${esc(kinds[n])}</small>` : ""}</button>`).join("")
     || `<span class="sub">No market matches. ${marketNames.length ? "" : "MT5 is not logged in, so only the bot's symbol is listed."}</span>`;
   if ($("mcount")) $("mcount").textContent = draft.markets.length;
 }
@@ -987,7 +1017,7 @@ async function loadMarkets() {
 $("agentsview").addEventListener("input", (event) => {
   const field = event.target.dataset.f;
   if (field) draft[field] = event.target.type === "number" ? +event.target.value : event.target.value;
-  if (field === "strategy") showUnderstood();
+  if (field === "strategy" || field === "every_minutes") showUnderstood();
   if (event.target.id === "msearch") { marketQuery = event.target.value; loadMarkets(); }
 });
 $("agentsview").addEventListener("change", (event) => {
@@ -997,7 +1027,7 @@ $("agentsview").addEventListener("change", (event) => {
   if (field === "runs" || field === "analyst") renderWizard();  // the timer's minutes and the analyst's reading come and go
 });
 $("agentsview").addEventListener("click", async (event) => {
-  const el = event.target.closest("[data-new],[data-agent],[data-setmode],[data-edit],[data-delete],[data-template],[data-goto],[data-cancel],[data-saveagent],[data-market],[data-mode-pick]");
+  const el = event.target.closest("[data-new],[data-agent],[data-setmode],[data-edit],[data-delete],[data-template],[data-goto],[data-cancel],[data-saveagent],[data-market],[data-mode-pick],[data-backtest]");
   if (!el) return;
   const d = el.dataset, card = el.closest("[data-agent]");
   try {
@@ -1024,6 +1054,18 @@ $("agentsview").addEventListener("click", async (event) => {
       return loadMarkets();
     }
     if (d.modePick) { draft.mode = d.modePick; return renderWizard(); }
+    if (d.backtest) {
+      $("btresult").innerHTML = `<div class="sub" style="margin-top: 8px">Testing… a few seconds per market.</div>`;
+      const result = await api("/api/myagents/backtest", draft);
+      const row = (name, t, span) => `<tr><td>${esc(name)}</td><td>${span}</td><td>${t.trades}</td><td>${t.trades ? Math.round(t.win_rate * 100) + "%" : "—"}</td>
+        <td class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${money(t.net)}</td><td>${t.trades ? "$" + t.max_drawdown.toFixed(2) : "—"}</td></tr>`;
+      $("btresult").innerHTML = `<table class="bt"><tr><th>Market</th><th>Period</th><th>Trades</th><th>Won</th><th>Profit</th><th>Worst drop</th></tr>
+        ${result.markets.map((m) => row(m.market, m.totals, `${when(m.from).slice(0, 5)} to ${when(m.to).slice(0, 5)}`)).join("")}
+        ${result.markets.length > 1 ? row("All", result.total, "") : ""}</table>
+        ${result.markets.filter((m) => m.too_wide >= 0.5).map((m) => `<div class="sub loss" style="margin-top: 6px">${esc(m.market)}: the spread was wider than your limit (${m.spread_limit} points, MAX_SPREAD_POINTS in Settings) on ${Math.round(m.too_wide * 100)}% of candles, so the bot skips it almost always, live too. Raise the limit or drop this market.</div>`).join("")}
+        <div class="sub" style="margin-top: 6px">${result.total.trades < 30 ? "Fewer than 30 trades: too few to judge. Watch it live for a while before trusting it." : "Enough trades for a first look; it is still the past."}</div>`;
+      return;
+    }
     if (d.goto !== undefined) { wizStep = +d.goto; return renderWizard(); }
     if (d.cancel) { draft = null; return loadMyAgents(); }
     if (d.saveagent) {

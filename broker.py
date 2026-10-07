@@ -321,6 +321,44 @@ def candles(symbol, timeframe, count):
              "low": float(r["low"]), "close": float(r["close"])} for r in rates]
 
 
+KINDS = [("crypto", "Crypto"), ("metal", "Metal"), ("forex", "Forex"), ("indic", "Index"), ("index", "Index"),
+         ("energ", "Commodity"), ("commodit", "Commodity"), ("etf", "ETF"), ("stock", "Stock"), ("share", "Stock")]
+
+
+def market_kind(path):
+    """What a symbol is, from the folder the broker files it in: "Stocks\\US\\GoldmSachs" -> Stock."""
+    lowered = path.lower()
+    return next((kind for word, kind in KINDS if word in lowered), path.split("\\")[0] if "\\" in path else "")
+
+
+def markets():
+    """[[name, kind]] for the agent wizard's market picker, in symbols() order: a stock named Gold must not pass for gold."""
+    with LOCK:
+        if not _attach():
+            return []
+        paths = {symbol.name: symbol.path for symbol in (mt5.symbols_get() or ())}
+    gold = gold_like(list(paths))
+    return [[name, market_kind(paths[name])] for name in gold + sorted(set(paths) - set(gold))]
+
+
+def history(symbol, timeframe, count):
+    """Closed candles with spreads for a backtest, and the symbol's digits and contract size."""
+    frame = getattr(mt5, "TIMEFRAME_" + timeframe, None)
+    if frame is None:
+        raise ValueError(f"unknown timeframe {timeframe}")
+    with LOCK:
+        if not _attach():
+            raise ValueError(_error("cannot reach the MT5 terminal"))
+        mt5.symbol_select(symbol, True)
+        rates = mt5.copy_rates_from_pos(symbol, frame, 1, count)  # from 1: the forming candle is left out
+        info = mt5.symbol_info(symbol)
+    if rates is None or len(rates) == 0 or info is None:
+        raise ValueError(f"no history for {symbol} {timeframe}: is the symbol name right, and MT5 logged in?")
+    bars = [{"time": int(r["time"]), "open": float(r["open"]), "high": float(r["high"]), "low": float(r["low"]),
+             "close": float(r["close"]), "spread": int(r["spread"])} for r in rates]
+    return bars, info.digits, info.trade_contract_size
+
+
 def symbols():
     """Every symbol name the broker offers, the plainest gold names first: the dashboard's SYMBOL picker."""
     with LOCK:

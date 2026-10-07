@@ -210,6 +210,13 @@ class BrokerTest(unittest.TestCase):
             with mock.patch.object(ui, "bot_running", return_value=True), self.assertRaisesRegex(ValueError, "Stop the bot"):
                 ui.switch_mode("live", env)
 
+    def test_market_kinds_come_from_the_brokers_folders(self):
+        kinds = {path: broker.market_kind(path) for path in (
+            r"Derivatives\Spot Metals\GOLD", r"Stocks\US\GoldmSachs", r"Forex\Standard\Majors\EURUSD",
+            r"Cryptocurrencies\Standard\BTCUSD", r"Derivatives\Cash\Cash Indices\US30Cash",
+            r"Derivatives\Cash\Cash Energies\OILCash", r"ETF Derivatives\SPY", r"Odd\Thing", "")}
+        self.assertEqual(list(kinds.values()), ["Metal", "Stock", "Forex", "Crypto", "Index", "Commodity", "ETF", "Odd", ""])
+
     def test_mode_follows_the_mt5_account_but_real_money_needs_a_yes(self):
         import tempfile
         from pathlib import Path

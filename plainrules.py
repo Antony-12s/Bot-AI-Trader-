@@ -232,8 +232,10 @@ def decide(text, candles):
     ready = [side for side in ("buy", "sell") if rules[side] and not rules["unknown"][side]]
     if not ready:
         return None, "no rule the built-in analyst can read: rewrite it, or pick an AI analyst"
-    met = [side for side in ready if all(holds(condition, candles) for condition in rules[side])]
+    missing = {side: [describe(c) for c in rules[side] if not holds(c, candles)] for side in ready}
+    met = [side for side in ready if not missing[side]]
     if len(met) != 1:
-        return None, "both sides' rules hold: hold" if met else "rules not met"
+        return None, "both sides' rules hold: hold" if met else "waiting: " + "; ".join(
+            f"{side} needs {', '.join(missing[side])}" for side in ready)
     side = met[0]
     return side, "; ".join(describe(condition) for condition in rules[side])
