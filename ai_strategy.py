@@ -260,6 +260,47 @@ def _ask_http(build, read, system, text, schema, config, opener=None):
     return answer, None, cost
 
 
+DEFAULT_MODELS = {"claude": MODEL, "openai": OPENAI_MODEL, "gemini": GEMINI_MODEL}
+# OpenAI lists every model it has; these words mark ones that cannot answer a text prompt.
+NOT_TEXT = ("audio", "realtime", "tts", "transcribe", "image", "search", "embedding", "moderation")
+
+
+def list_models(provider, key, opener=None):
+    """Model ids this key can use, the default first. Free to call, so it doubles as the key test.
+
+    Raises ValueError with a reason a person can act on.
+    """
+    if provider not in KEYS:
+        raise ValueError(f"unknown AI provider {provider}")
+    if not key:
+        raise ValueError(f"no {KEYS[provider]}: paste the key first")
+    if provider == "claude":
+        url, headers = "https://api.anthropic.com/v1/models?limit=100", {"x-api-key": key, "anthropic-version": "2023-06-01"}
+    elif provider == "openai":
+        url, headers = "https://api.openai.com/v1/models", {"Authorization": "Bearer " + key}
+    else:
+        url, headers = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", {"x-goog-api-key": key}
+    try:
+        with (opener or urllib.request.urlopen)(urllib.request.Request(url, headers=headers), timeout=20) as response:
+            reply = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        if error.code in (400, 401, 403):
+            raise ValueError("the key was rejected: check it was copied whole, and that billing is set up") from None
+        raise ValueError(f"the AI company answered with error {error.code}, try again in a minute") from None
+    except OSError as error:
+        raise ValueError(f"could not reach the AI company ({error})") from None
+    if provider == "gemini":
+        ids = [model["name"].split("/")[-1] for model in reply.get("models", [])
+               if model.get("name", "").split("/")[-1].startswith("gemini")
+               and "generateContent" in model.get("supportedGenerationMethods", [])]
+    else:
+        ids = [model["id"] for model in reply.get("data", [])]
+        if provider == "openai":
+            ids = [i for i in ids if i.startswith("gpt-") and not any(word in i for word in NOT_TEXT)]
+    default = DEFAULT_MODELS[provider]
+    return sorted(set(ids), key=lambda i: (i != default, i))
+
+
 def _ask_claude(system, text, schema, config, effort):
     try:
         client = anthropic.Anthropic(api_key=config["ANTHROPIC_API_KEY"] or None, timeout=120.0)

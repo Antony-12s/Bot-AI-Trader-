@@ -197,6 +197,16 @@ def ping_webhook(path=ENV_PATH, opener=urllib.request.urlopen):
         raise ValueError(f"could not reach ntfy.sh: {error}") from None
 
 
+def test_ai_key(body, path=ENV_PATH):
+    """List the models a key can use: the key typed on the page, or the stored one when it is blank."""
+    import ai_strategy
+    provider = body.get("provider")
+    if provider not in ai_strategy.KEYS:
+        raise ValueError(f"unknown AI provider {provider}")
+    key = str(body.get("key") or "").strip() or read_env(path)[ai_strategy.KEYS[provider]]
+    return {"models": ai_strategy.list_models(provider, key), "default": ai_strategy.DEFAULT_MODELS[provider]}
+
+
 def broker_login(body):
     """Log MT5 into the account from the form. Refused while a bot trades: it would switch under it."""
     if bot_running():
@@ -338,6 +348,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/signals/rotate": lambda: (rotate_topic(), public_settings())[1],
             "/api/signals/ping": lambda: (ping_webhook(), {"sent": True})[1],
             "/api/broker/login": lambda: broker_login(body),  # the password is not stored or logged
+            "/api/ai/test": lambda: test_ai_key(body),  # the key is only sent to its own AI company
             "/api/broker/install": lambda: (__import__("broker").start_install(), {"started": True})[1],
         }
         action = actions.get(urlparse(self.path).path)

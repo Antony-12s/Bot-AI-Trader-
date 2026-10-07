@@ -139,7 +139,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <a href="#history" data-page="history">History</a>
   <a href="#signals" data-page="signals">Signals</a>
   <div class="group">• AUTOMATION</div>
-  <a href="#agents" data-page="agents">Agents</a>
+  <a href="#agents" data-page="agents">Strategies</a>
   <div class="group">• BROKER</div>
   <a href="#broker" data-page="broker">MetaTrader 5 <span id="navacct"></span></a>
   <div class="group">• APP</div>
@@ -164,15 +164,15 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
 
   <section id="dashboard">
     <div class="cards">
-      <div class="card"><div class="label">Today</div><div class="big" id="today"></div><div class="sub">realized, all sources</div></div>
+      <div class="card"><div class="label">Today</div><div class="big" id="today"></div><div class="sub">profit from trades closed today</div></div>
       <div class="card"><div class="label">Win rate</div><div class="big" id="winrate"></div><div class="sub" id="wl"></div></div>
       <div class="card"><div class="label">Open now</div><div class="big" id="open"></div><div class="sub">paper and MT5 positions</div></div>
-      <div class="card"><div class="label">AI spend</div><div class="big" id="spend"></div><div class="sub">total on record</div></div>
+      <div class="card"><div class="label">AI cost</div><div class="big" id="spend"></div><div class="sub">paid to the AI so far</div></div>
     </div>
     <div class="row">
       <div class="card">
         <div class="chart-head">
-          <div><b>Equity curve</b> <span class="sub" id="stats"></span></div>
+          <div><b>Profit over time</b> <span class="sub" id="stats"></span></div>
           <div class="seg" id="range"><button data-days="1">24H</button><button data-days="7">7D</button><button data-days="30" class="on">30D</button><button data-days="3650">All</button></div>
         </div>
         <svg id="chart" viewBox="0 0 600 240" preserveAspectRatio="none"></svg>
@@ -185,7 +185,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <section id="history" hidden>
     <div class="card table">
       <table>
-        <thead><tr><th>Closed</th><th>Side</th><th>Symbol</th><th class="num">Lot</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">Profit</th><th>Outcome</th><th>Brain</th><th>Source</th></tr></thead>
+        <thead><tr><th>Closed</th><th>Side</th><th>Symbol</th><th class="num">Lot</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">Profit</th><th>How it ended</th><th>Decided by</th><th>Account</th></tr></thead>
         <tbody id="trades"></tbody>
       </table>
       <div class="sub" style="margin-top: 10px">Click a trade for the reason it was opened and the lesson the AI took from it. Newest 200.</div>
@@ -207,7 +207,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   </section>
 
   <section id="agents" hidden>
-    <div class="sub" style="margin: -8px 0 14px">Each agent is one rules strategy. Armed agents propose trades; risk limits still decide. Changes apply when the bot starts.</div>
+    <div class="sub" style="margin: -8px 0 14px">Each strategy is one way of spotting a trade. Turn on the ones you want; your safety limits still have the last word. Changes apply the next time the bot starts.</div>
     <div class="three">
       <div class="card"><div class="label" style="color: var(--accent)">• Your agents</div><div class="list" id="agentlist"></div></div>
       <div class="card" id="agent"></div>
@@ -277,11 +277,11 @@ const FIELDS = [
     ["MAGIC", "number", null, "Tags this bot's orders so it only counts its own"],
   ]],
   ["AI & Telegram", "Claude, GPT or Gemini; Telegram bot", [
-    ["AI_PROVIDER", "choice", ["claude", "openai", "gemini"], "Which AI decides when BRAIN is ai or hybrid. Each needs its own key below."],
-    ["AI_MODEL", "text", null, "Empty = default: claude-sonnet-5-5, gpt-6.1-sol or gemini-3.8-flash. The spend estimate uses the default's prices."],
-    ["ANTHROPIC_API_KEY", "password", null, "Claude, from platform.claude.com. Leave blank to keep the stored key"],
-    ["OPENAI_API_KEY", "password", null, "GPT, from platform.openai.com. Leave blank to keep the stored key"],
-    ["GEMINI_API_KEY", "password", null, "Gemini, from aistudio.google.com. Leave blank to keep the stored key"],
+    ["AI_PROVIDER", "choice", ["claude", "openai", "gemini"], "Which AI makes the calls when BRAIN is ai or hybrid."],
+    ["AI_MODEL", "model", null, "Press Test next to the key first: the list then shows every model that key can use."],
+    ["ANTHROPIC_API_KEY", "aikey", "claude", "Claude key, from platform.claude.com. Leave blank to keep the stored one."],
+    ["OPENAI_API_KEY", "aikey", "openai", "GPT key, from platform.openai.com. Leave blank to keep the stored one."],
+    ["GEMINI_API_KEY", "aikey", "gemini", "Gemini key, from aistudio.google.com. Leave blank to keep the stored one."],
     ["TELEGRAM_TOKEN", "password", null, "From @BotFather. Leave blank to keep the stored one"],
     ["TELEGRAM_CHAT_ID", "text", null, "Your chat id"],
   ]],
@@ -352,8 +352,8 @@ async function loadHistory() {
     <tr class="trade" data-id="${t.id}"><td>${when(t.closed_at)}</td><td class="${esc(t.side)}">${esc(t.side).toUpperCase()}</td><td>${esc(t.symbol)}</td>
     <td class="num">${t.lot}</td><td class="num">${t.entry}</td><td class="num">${t.exit ?? "—"}</td>
     <td class="num ${t.profit > 0 ? "win" : t.profit < 0 ? "loss" : ""}">${t.profit == null ? "—" : money(t.profit)}</td>
-    <td>${esc(t.outcome ?? "open")}</td><td>${esc(t.brain ?? "—")}</td><td>${esc(t.source)}</td></tr>
-    <tr class="detail" data-for="${t.id}" hidden><td colspan="10"><b>Why:</b> ${esc(t.reason || "—")}${t.lesson ? `<br><b>Lesson:</b> ${esc(t.lesson)}` : ""}</td></tr>`).join("")
+    <td>${esc(t.outcome ? OUTCOME[t.outcome] || t.outcome : "Still open")}</td><td>${esc(WHO[t.brain] || t.brain || "—")}</td><td>${esc(WHO[t.source] || t.source)}</td></tr>
+    <tr class="detail" data-for="${t.id}" hidden><td colspan="10"><b>Why it opened:</b> ${esc(plainReason(t.reason) || "—")}${t.lesson ? `<br><b>What the AI learned:</b> ${esc(t.lesson)}` : ""}</td></tr>`).join("")
     : `<tr><td colspan="10" class="empty">No trades yet</td></tr>`;
 }
 
@@ -388,7 +388,7 @@ async function loadDashboard() {
   $("tmax").textContent = maxTrades ? ` / ${maxTrades}` : " · no daily limit";
   $("tbar").style.width = maxTrades ? Math.min(100, data.trades_today / maxTrades * 100) + "%" : "0";
   $("spend").textContent = "$" + data.ai_spend.toFixed(2);
-  $("stats").textContent = t.trades ? `net ${money(t.net)} · max drawdown $${t.max_drawdown.toFixed(2)} · ${t.trades} trades` : "";
+  $("stats").textContent = t.trades ? `total ${money(t.net)} · biggest drop from a high $${t.max_drawdown.toFixed(2)} · ${t.trades} trades` : "";
   drawChart(data.equity);
   $("feed").innerHTML = feedHtml(data.decisions);
 }
@@ -405,11 +405,35 @@ function buildForm(settings) {
           <div class="field"><label for="${key}">${key}</label>
           ${kind === "choice"
             ? `<input type="hidden" id="${key}" name="${key}"><div class="choices" data-for="${key}">${options.map((o) => `<button type="button" data-value="${o}">${o}</button>`).join("")}</div>`
+            : kind === "model"
+            ? `<select id="${key}" name="${key}"><option value="">Default</option>${settings[key] ? `<option>${esc(settings[key])}</option>` : ""}</select>`
+            : kind === "aikey"
+            ? `<div class="copy" style="margin: 0"><input id="${key}" name="${key}" type="password" autocomplete="off"
+                placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"><button type="button" class="ghost" data-test="${options}">Test</button></div>`
             : `<input id="${key}" name="${key}" type="${kind}" ${kind === "number" ? 'step="any"' : ""} autocomplete="off"
                 ${kind === "password" ? `placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"` : ""}>`}
-          <small>${hint}</small></div>`).join("")}</div></div>`).join("")}</div>
+          <small id="hint-${key}">${hint}</small></div>`).join("")}</div></div>`).join("")}</div>
     </div>`;
-  for (const [, , fields] of FIELDS) for (const [key, kind] of fields) if (kind !== "password") choose(key, settings[key]);
+  for (const [, , fields] of FIELDS) for (const [key, kind] of fields) if (kind !== "password" && kind !== "aikey") choose(key, settings[key]);
+}
+
+// Test a key: list the models it can use, then let the user pick one from the drop-down.
+async function testKey(provider, button) {
+  const keyField = FIELDS.flatMap(([, , f]) => f).find(([, kind, opt]) => kind === "aikey" && opt === provider)[0];
+  const hint = $("hint-" + keyField);
+  button.disabled = true; button.textContent = "Testing…";
+  try {
+    const result = await api("/api/ai/test", { provider, key: $(keyField).value });
+    hint.innerHTML = `<span class="win">✓ Key works.</span> ${result.models.length} models available: pick one in AI_MODEL, then Save settings.`;
+    choose("AI_PROVIDER", provider);
+    const keep = $("AI_MODEL").value;
+    $("AI_MODEL").innerHTML = `<option value="">Default (${esc(result.default)})</option>` +
+      result.models.map((m) => `<option ${m === keep ? "selected" : ""}>${esc(m)}</option>`).join("");
+    $("hint-AI_MODEL").textContent = `Models for ${provider}. Prices for the spend estimate are only known for the default.`;
+  } catch (error) {
+    hint.innerHTML = `<span class="loss">✗ ${esc(error.message)}</span>`;
+  }
+  button.disabled = false; button.textContent = "Test";
 }
 
 function choose(key, value) {
@@ -419,7 +443,13 @@ function choose(key, value) {
 }
 
 $("form").addEventListener("click", (event) => {
+  if (event.target.dataset.test) return testKey(event.target.dataset.test, event.target);
   const option = event.target.closest(".choices button");
+  if (option && option.parentElement.dataset.for === "AI_PROVIDER" && option.dataset.value !== $("AI_PROVIDER").value) {
+    // another company's model names do not apply: back to its default until its key is tested
+    $("AI_MODEL").innerHTML = `<option value="">Default</option>`;
+    $("hint-AI_MODEL").textContent = "Press Test next to this company's key to list its models.";
+  }
   if (option) return choose(option.parentElement.dataset.for, option.dataset.value);
   const link = event.target.closest(".subnav a");
   if (!link) return;
@@ -451,29 +481,47 @@ $("range").addEventListener("click", (event) => {
 });
 
 let agentList = [], picked = null;
+const plainReason = (reason) => String(reason ?? "").replace(/^(\w+): /, (whole, name) => PLAIN[name] ? plainName(name) + ": " : whole);
 const feedHtml = (items) => items.length ? items.map((d) => `
-  <div class="item"><b class="${esc(d.action)}">${esc(d.action).toUpperCase()}</b><span class="sub">${when(d.at)} · ${esc(d.source)}</span>
-  <div>${esc(d.reason)}</div></div>`).join("") : `<div class="empty">No decisions yet</div>`;
+  <div class="item"><b class="${esc(d.action)}">${esc(d.action).toUpperCase()}</b><span class="sub">${when(d.at)} · ${esc(WHO[d.source] || d.source)}</span>
+  <div>${esc(plainReason(d.reason))}</div></div>`).join("") : `<div class="empty">No decisions yet</div>`;
+// Journal codes in words people use.
+const WHO = { bot: "bot", replay: "past-price test", paper: "Paper", mt5: "Real or demo", rules: "Strategy", ai: "AI", hybrid: "Strategy + AI", webhook: "TradingView", telegram: "Telegram" };
+const OUTCOME = { sl: "Stop loss", tp: "Take profit", closed: "Closed by hand" };
+
+// Plain-English name and one-line idea for each strategy; the code name stays in small print.
+const PLAIN = {
+  ma_cross: ["Average crossover", "Buys when the short-term average price climbs above the long-term one, sells when it drops below."],
+  trend_pullback: ["Buy the dip in a trend", "When the market is clearly going one way, waits for a small step back, then trades in that direction."],
+  bollinger_breakout: ["Breakout after a quiet spell", "Waits for a calm, narrow market, then follows the price when it suddenly breaks out."],
+  rsi_reversion: ["Bounce after a big move", "When price has run too far too fast, bets it bounces back part of the way."],
+  mr_zscore: ["Snap back to normal", "When price stretches far from its usual level in a calm market, bets it returns."],
+};
+const plainName = (name) => (PLAIN[name] || [name])[0];
 
 async function loadAgents() {
   agentList = await api("/api/agents");
   if (!agentList.some((a) => a.name === picked)) picked = (agentList.find((a) => a.armed) || agentList[0]).name;
   $("agentlist").innerHTML = agentList.map((a) => `
     <div class="agent ${a.armed ? "armed" : ""} ${a.name === picked ? "on" : ""}" data-name="${esc(a.name)}">
-      <b>${esc(a.name)}</b><div class="sub">${a.totals.trades ? Math.round(a.totals.win_rate * 100) + "% of " + a.totals.trades : "no trades yet"} · ${a.armed ? "armed" : "off"}</div></div>`).join("");
+      <b>${esc(plainName(a.name))}</b><div class="sub">${a.armed ? "On" : "Off"} · ${a.totals.trades ? `won ${Math.round(a.totals.win_rate * 100)}% of ${a.totals.trades} trades` : "no trades yet"}</div></div>`).join("");
   const a = agentList.find((x) => x.name === picked), t = a.totals;
-  const verdict = t.trades >= 100 ? "enough to judge; arming is still your call" : t.trades >= 30 ? "an early read, keep watching" : "too few to judge yet: replay it first (train.bat)";
+  const verdict = t.trades >= 100 ? "Enough trades to judge it. Turning it on is still your call."
+    : t.trades >= 30 ? "Early results. Watch it a while longer before trusting it."
+    : "Too few trades to tell yet. Try it on past prices first (Advanced → Train AI).";
+  const tone = t.net > 0 ? "win" : t.net < 0 ? "loss" : "";
   $("agent").innerHTML = `
-    <div class="agent-head"><div><b style="font-size: 20px">${esc(a.name)}</b><div class="sub">${esc(a.about)}</div></div>
-      <button class="switch ${a.armed ? "on" : ""}" id="arm" title="${a.armed ? "Disarm" : "Arm"}"></button></div>
+    <div class="agent-head"><div><b style="font-size: 20px">${esc(plainName(a.name))}</b>
+      <div class="sub">${esc((PLAIN[a.name] || [, a.about])[1])}</div><div class="sub" style="font-size: 11px">code name: ${esc(a.name)}</div></div>
+      <div style="text-align: center"><button class="switch ${a.armed ? "on" : ""}" id="arm" title="${a.armed ? "Turn off" : "Turn on"}"></button><div class="sub">${a.armed ? "On" : "Off"}</div></div></div>
     <div class="mini">
-      <div><b class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${t.trades ? Math.round(t.win_rate * 100) + "%" : "—"}</b><span class="sub">win rate · ${t.wins}W / ${t.losses}L</span></div>
-      <div><b>${t.trades}</b><span class="sub">settled · ${a.live_trades} paper/live, ${t.trades - a.live_trades} replay</span></div>
-      <div><b class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${money(t.net)}</b><span class="sub">net · profit factor ${t.profit_factor ?? "—"}</span></div>
-      <div><b>${t.longest_losing_streak}</b><span class="sub">longest losing streak · drawdown $${t.max_drawdown.toFixed(2)}</span></div>
+      <div><b class="${tone}">${t.trades ? Math.round(t.win_rate * 100) + "%" : "—"}</b><span class="sub">of trades won (${t.wins} won, ${t.losses} lost)</span></div>
+      <div><b>${t.trades}</b><span class="sub">trades finished (${a.live_trades} paper or live, ${t.trades - a.live_trades} tested on past prices)</span></div>
+      <div><b class="${tone}">${money(t.net)}</b><span class="sub">total profit${t.profit_factor ? ` · makes $${t.profit_factor} for every $1 it loses` : ""}</span></div>
+      <div><b>${t.longest_losing_streak}</b><span class="sub">losses in a row at worst · biggest drop from a high: $${t.max_drawdown.toFixed(2)}</span></div>
     </div>
-    <div class="ladder"><div class="label">Trust ladder</div><div class="meter"><i style="width: ${a.trust * 100}%"></i></div>
-      <div class="sub" style="margin-top: 8px"><b style="color: var(--text)">${t.trades} settled</b> · ${verdict}</div></div>`;
+    <div class="ladder"><div class="label">How much to trust it</div><div class="meter"><i style="width: ${a.trust * 100}%"></i></div>
+      <div class="sub" style="margin-top: 8px"><b style="color: var(--text)">${t.trades} of 100 trades</b> · ${verdict}</div></div>`;
   $("agentfeed").innerHTML = feedHtml(a.decisions);
 }
 
@@ -697,7 +745,7 @@ $("steps").addEventListener("submit", async (event) => {
   catch (error) { $("setupmsg").textContent = error.message; $("setupmsg").className = "msg loss"; }
 });
 
-const PAGES = { dashboard: "Dashboard", history: "History", signals: "Signals", agents: "AI Agents", broker: "MetaTrader 5", setup: "Setup", settings: "Settings" };
+const PAGES = { dashboard: "Dashboard", history: "History", signals: "Signals", agents: "Strategies", broker: "MetaTrader 5", setup: "Setup", settings: "Settings" };
 function route() {
   const [wanted, sub] = location.hash.slice(1).split("/");  // #settings/ai opens that Settings section
   const page = wanted in PAGES ? wanted : "dashboard";

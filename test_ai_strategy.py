@@ -107,6 +107,30 @@ class ProviderTest(unittest.TestCase):
             self.assertTrue(decision.reason.startswith("AI error"), decision.reason)
             self.assertIn(expected, decision.reason)
 
+    def test_key_test_lists_usable_models_default_first(self):
+        replies = {
+            "claude": {"data": [{"id": "claude-haiku-4-5"}, {"id": ai_strategy.MODEL}]},
+            "openai": {"data": [{"id": "gpt-5-mini"}, {"id": "gpt-realtime"}, {"id": "text-embedding-3"}, {"id": "gpt-image-1"}, {"id": ai_strategy.OPENAI_MODEL}]},
+            "gemini": {"models": [{"name": "models/gemini-2.5-flash", "supportedGenerationMethods": ["generateContent"]},
+                                  {"name": "models/text-embedding-004", "supportedGenerationMethods": ["embedContent"]},
+                                  {"name": "models/" + ai_strategy.GEMINI_MODEL, "supportedGenerationMethods": ["generateContent"]}]},
+        }
+        expected = {"claude": [ai_strategy.MODEL, "claude-haiku-4-5"], "openai": [ai_strategy.OPENAI_MODEL, "gpt-5-mini"],
+                    "gemini": [ai_strategy.GEMINI_MODEL, "gemini-2.5-flash"]}
+        for provider, reply in replies.items():
+            http = FakeHttp(reply)
+            self.assertEqual(ai_strategy.list_models(provider, "k-123", http), expected[provider], provider)
+            self.assertNotIn("k-123", http.requests[0].full_url)  # the key travels in a header, never the URL
+
+    def test_key_test_explains_failures(self):
+        import urllib.error
+        with self.assertRaisesRegex(ValueError, "rejected"):
+            ai_strategy.list_models("openai", "bad", FakeHttp(error=urllib.error.HTTPError("u", 401, "no", {}, None)))
+        with self.assertRaisesRegex(ValueError, "paste the key"):
+            ai_strategy.list_models("gemini", "", FakeHttp({}))
+        with self.assertRaisesRegex(ValueError, "could not reach"):
+            ai_strategy.list_models("claude", "k", FakeHttp(error=OSError("offline")))
+
     def test_unknown_provider_is_refused_at_startup(self):
         import tempfile
         from pathlib import Path

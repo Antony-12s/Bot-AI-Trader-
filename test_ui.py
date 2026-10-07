@@ -214,6 +214,21 @@ class SignalsPageTest(unittest.TestCase):
         self.assertIsNone(__import__("signals").parse("test ping")[0])  # a running bot will not trade it
 
 
+class AiKeyTest(unittest.TestCase):
+    def test_blank_key_on_the_page_tests_the_stored_one(self):
+        with tempfile.TemporaryDirectory() as folder:
+            env = Path(folder, ".env")
+            env.write_text("OPENAI_API_KEY=sk-stored\n", encoding="utf-8")
+            with mock.patch("ai_strategy.list_models", return_value=["gpt-6.1-sol"]) as listing:
+                result = ui.test_ai_key({"provider": "openai", "key": ""}, env)
+                ui.test_ai_key({"provider": "openai", "key": " sk-typed "}, env)
+        self.assertEqual(listing.call_args_list[0].args, ("openai", "sk-stored"))
+        self.assertEqual(listing.call_args_list[1].args, ("openai", "sk-typed"))
+        self.assertEqual(result["models"], ["gpt-6.1-sol"])
+        with self.assertRaises(ValueError):
+            ui.test_ai_key({"provider": "grok", "key": "x"}, env)
+
+
 class WindowTest(unittest.TestCase):
     def test_no_webview2_falls_back_to_the_browser(self):
         broken = SimpleNamespace(create_window=mock.Mock(side_effect=RuntimeError("WebView2 runtime missing")))
