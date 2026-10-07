@@ -21,10 +21,14 @@ main { flex: 1; padding: 22px 28px; min-width: 0; }
 header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
 h1 { margin: 0; font-size: 24px; }
 .sub { color: var(--muted); font-size: 13px; }
-.badge { padding: 6px 14px; border-radius: 999px; font-weight: 700; font-size: 13px; border: 1px solid; }
-.badge.dry { color: var(--muted); border-color: var(--line); }
-.badge.demo { color: #60a5fa; border-color: #1e3a5f; background: #0f1d30; }
-.badge.live { color: var(--loss); border-color: #5f1e1e; background: #2a1010; }
+.modes button { font-weight: 700; }
+.modes button.on[data-mode="dry"] { color: var(--text); }
+.modes button.on[data-mode="demo"] { color: #60a5fa; background: #0f1d30; }
+.modes button.on[data-mode="live"] { color: var(--loss); background: #2a1010; }
+.counter { margin-top: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.counter b { font-size: 30px; }
+.meter { height: 8px; background: var(--bg); border-radius: 4px; margin-top: 8px; overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--accent); }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 14px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
 .label { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
@@ -50,6 +54,16 @@ input, select { width: 100%; background: var(--bg); color: var(--text); border: 
 input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
 .save { background: var(--accent); color: #1a0d00; border: 0; border-radius: 12px; padding: 11px 22px; font: inherit; font-weight: 700; cursor: pointer; }
 .msg { margin-left: 12px; font-size: 14px; }
+.settings-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.settings { display: grid; grid-template-columns: 240px 1fr; gap: 18px; align-items: start; }
+.subnav { display: flex; flex-direction: column; gap: 4px; }
+.subnav a { padding: 10px 12px; border-radius: 10px; border-left: 3px solid transparent; cursor: pointer; display: flex; flex-direction: column; }
+.subnav a span { color: var(--muted); font-size: 12px; }
+.subnav a.on { background: var(--panel); border-left-color: var(--accent); }
+.choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.choices button { flex: 1 1 44px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; font: inherit; cursor: pointer; }
+.choices button.on { color: var(--accent); border-color: var(--accent); background: #24170a; }
+@media (max-width: 860px) { .settings { grid-template-columns: 1fr; } .subnav { flex-direction: row; flex-wrap: wrap; } }
 .top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .state { font-size: 13px; font-weight: 700; color: var(--muted); }
 .state::before { content: "●"; margin-right: 6px; }
@@ -67,7 +81,7 @@ tr.trade { cursor: pointer; }
 tr.trade:hover td { background: var(--panel2); }
 tr.detail td { white-space: normal; color: var(--muted); background: var(--panel2); }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
-@media (max-width: 720px) { body { flex-direction: column; } nav { width: auto; flex-direction: row; flex-wrap: wrap; } .group { display: none; } main { padding: 16px; } }
+@media (max-width: 720px) { body { flex-direction: column; } nav { width: auto; flex-direction: row; flex-wrap: wrap; } .group, .counter { display: none; } main { padding: 16px; } }
 </style>
 </head>
 <body>
@@ -78,12 +92,17 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <a href="#history" data-page="history">History</a>
   <div class="group">• APP</div>
   <a href="#settings" data-page="settings">Settings</a>
+  <div class="counter">
+    <div class="label">Trades today</div>
+    <div><b id="tcount">0</b><span class="sub" id="tmax"></span></div>
+    <div class="meter"><i id="tbar"></i></div>
+  </div>
 </nav>
 <main>
   <header>
     <div><h1 id="title">Dashboard</h1><div class="sub" id="where"></div></div>
     <div class="top">
-      <span class="badge" id="mode"></span>
+      <div class="seg modes" id="modes"><button data-mode="dry">Paper</button><button data-mode="demo">Demo</button><button data-mode="live">Live</button></div>
       <span class="state" id="state">checking</span>
       <button class="go" id="go" disabled>Start</button>
     </div>
@@ -124,36 +143,42 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   </section>
 </main>
 <script>
+// [section, subtitle, [[key, kind, options, hint]]]; "choice" renders as buttons, like a segmented control.
 const FIELDS = [
-  ["Trading", [
-    ["MODE", "select", ["dry", "demo", "live"], "dry = paper only. demo sends orders on a demo account. live = real money."],
-    ["BRAIN", "select", ["rules", "ai", "hybrid"], "rules is free. ai and hybrid call Claude and cost money."],
-    ["STRATEGY", "text", null, "ma_cross, trend_pullback, bollinger_breakout, rsi_reversion, mr_zscore, a list, or all"],
+  ["Execution", "Mode, brain, market, size", [
+    ["MODE", "choice", ["dry", "demo", "live"], "dry = paper only. demo sends orders on a demo account. live = real money."],
+    ["BRAIN", "choice", ["rules", "ai", "hybrid"], "rules is free. ai decides every candle, hybrid only judges setups; both call Claude."],
     ["SYMBOL", "text", null, "Exactly as your broker names it (XAUUSD, XAUUSDm, GOLD ...)"],
-    ["TIMEFRAME", "select", ["M1", "M5", "M15", "M30", "H1", "H4", "D1"], "Candle size the bot decides on"],
+    ["TIMEFRAME", "choice", ["M1", "M5", "M15", "M30", "H1", "H4", "D1"], "Candle size the bot decides on"],
     ["LOT", "number", null, "Size of every order"],
   ]],
-  ["Risk & safety", [
+  ["Caps", "Daily limits", [
     ["MAX_DAILY_LOSS", "number", null, "Stop opening trades once today's realized loss reaches this"],
-    ["SL_ATR", "number", null, "Stop loss in ATRs. 0 = use SL_POINTS"],
-    ["TP_ATR", "number", null, "Take profit in ATRs. 0 = use TP_POINTS"],
-    ["ATR_PERIOD", "number", null, "Candles in the ATR"],
-    ["SL_POINTS", "number", null, "Fixed stop in points"],
-    ["TP_POINTS", "number", null, "Fixed target in points"],
-    ["MAX_SPREAD_POINTS", "number", null, "Skip entries when the spread is wider"],
+    ["MAX_TRADES_PER_DAY", "number", null, "Stop opening trades after this many today. 0 = no limit"],
     ["AI_BUDGET_USD", "number", null, "Daily Claude spend cap; the bot holds once reached"],
   ]],
-  ["Broker", [
-    ["CONTRACT_SIZE", "number", null, "Units per lot: 100 for gold, 100000 for most forex"],
-    ["FILLING", "select", ["IOC", "FOK", "RETURN"], "Change it if orders fail with Unsupported filling mode"],
-    ["MAGIC", "number", null, "Tags this bot's orders"],
+  ["Safety", "Stop loss and take profit", [
+    ["SL_ATR", "number", null, "Stop loss in ATRs, widens when the market moves more. 0 = use SL_POINTS"],
+    ["TP_ATR", "number", null, "Take profit in ATRs. 0 = use TP_POINTS"],
+    ["ATR_PERIOD", "number", null, "Candles in the ATR"],
+    ["SL_POINTS", "number", null, "Fixed stop in points, used when SL_ATR is 0"],
+    ["TP_POINTS", "number", null, "Fixed target in points, used when TP_ATR is 0"],
   ]],
-  ["Keys & Telegram", [
+  ["Filters", "When not to trade", [
+    ["MAX_SPREAD_POINTS", "number", null, "Skip entries while the spread is wider than this"],
+  ]],
+  ["Broker", "MT5 order details", [
+    ["CONTRACT_SIZE", "number", null, "Units per lot: 100 for gold, 100000 for most forex"],
+    ["FILLING", "choice", ["IOC", "FOK", "RETURN"], "Change it if orders fail with Unsupported filling mode"],
+    ["MAGIC", "number", null, "Tags this bot's orders so it only counts its own"],
+  ]],
+  ["Keys & Telegram", "AI key, Telegram bot", [
     ["ANTHROPIC_API_KEY", "password", null, "Leave blank to keep the stored key"],
     ["TELEGRAM_TOKEN", "password", null, "From @BotFather. Leave blank to keep the stored one"],
     ["TELEGRAM_CHAT_ID", "text", null, "Your chat id"],
   ]],
 ];
+let section = 0;
 const $ = (id) => document.getElementById(id);
 const money = (n) => (n < 0 ? "-$" : n > 0 ? "+$" : "$") + Math.abs(n).toFixed(2);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
@@ -169,13 +194,24 @@ async function api(path, body) {
   return data;
 }
 
+let maxTrades = 0;
 function showMode(settings) {
   mode = settings.MODE;
-  const badge = $("mode");
-  badge.textContent = settings.MODE.toUpperCase() + (settings.MODE === "live" ? " · REAL MONEY" : "");
-  badge.className = "badge " + settings.MODE;
-  $("where").textContent = `${settings.SYMBOL} · ${settings.TIMEFRAME} · brain ${settings.BRAIN}`;
+  maxTrades = +settings.MAX_TRADES_PER_DAY || 0;
+  for (const button of $("modes").children) button.classList.toggle("on", button.dataset.mode === mode);
+  $("where").textContent = `${settings.SYMBOL} · ${settings.TIMEFRAME} · brain ${settings.BRAIN}` + (mode === "live" ? " · REAL MONEY" : "");
 }
+
+$("modes").addEventListener("click", async (event) => {
+  const next = event.target.dataset.mode;
+  if (!next || next === mode) return;
+  if (next === "live" && !confirm("Live sends orders on any account, real money included. Switch to Live?")) return;
+  try {
+    const settings = await api("/api/settings", { MODE: next });
+    showMode(settings); buildForm(settings);
+    if ($("go").textContent === "Stop") alert("Saved. The running bot keeps its old mode until you Stop and Start it.");
+  } catch (error) { alert(error.message); }
+});
 
 async function loadBot() {
   const bot = await api("/api/bot");
@@ -239,6 +275,9 @@ async function loadDashboard() {
   $("winrate").textContent = t.trades ? Math.round(t.win_rate * 100) + "%" : "—";
   $("wl").innerHTML = `<span class="win">${t.wins}W</span> / <span class="loss">${t.losses}L</span>`;
   $("open").textContent = data.open;
+  $("tcount").textContent = data.trades_today;
+  $("tmax").textContent = maxTrades ? ` / ${maxTrades}` : " · no daily limit";
+  $("tbar").style.width = maxTrades ? Math.min(100, data.trades_today / maxTrades * 100) + "%" : "0";
   $("spend").textContent = "$" + data.ai_spend.toFixed(2);
   $("stats").textContent = t.trades ? `net ${money(t.net)} · max drawdown $${t.max_drawdown.toFixed(2)} · ${t.trades} trades` : "";
   drawChart(data.equity);
@@ -247,19 +286,40 @@ async function loadDashboard() {
     <div>${esc(d.reason)}</div></div>`).join("") : `<div class="empty">No decisions yet</div>`;
 }
 
+// Every section stays in the form (hidden ones too), so Save always sends all of them.
 function buildForm(settings) {
-  $("form").innerHTML = FIELDS.map(([group, fields]) => `
-    <div class="card"><b>${group}</b><div class="fields">${fields.map(([key, kind, options, hint]) => `
-      <div class="field"><label for="${key}">${key}</label>
-      ${kind === "select"
-        ? `<select id="${key}" name="${key}">${options.map((o) => `<option ${o === settings[key] ? "selected" : ""}>${o}</option>`).join("")}</select>`
-        : `<input id="${key}" name="${key}" type="${kind}" ${kind === "number" ? 'step="any"' : ""} autocomplete="off"
-            ${kind === "password" ? `placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"` : ""}>`}
-      <small>${hint}</small></div>`).join("")}</div></div>`).join("") +
-    `<button class="save" type="submit">Save settings</button><span class="msg" id="msg"></span>
-     <div class="sub" style="margin-top:8px">The bot reads these at start: restart it after saving.</div>`;
-  for (const [, fields] of FIELDS) for (const [key, kind] of fields) if (kind !== "select" && kind !== "password") $(key).value = settings[key];
+  $("form").innerHTML = `
+    <div class="settings-head"><span class="sub">Saved to .env. The bot reads it at start: Stop and Start after saving.</span>
+      <span><span class="msg" id="msg"></span><button class="save" type="submit">Save settings</button></span></div>
+    <div class="settings">
+      <div class="subnav">${FIELDS.map(([name, sub], i) => `<a data-section="${i}" class="${i === section ? "on" : ""}"><b>${name}</b><span>${sub}</span></a>`).join("")}</div>
+      <div>${FIELDS.map(([name, , fields], i) => `
+        <div class="card" data-panel="${i}" ${i === section ? "" : "hidden"}><b>${name}</b><div class="fields">${fields.map(([key, kind, options, hint]) => `
+          <div class="field"><label for="${key}">${key}</label>
+          ${kind === "choice"
+            ? `<input type="hidden" id="${key}" name="${key}"><div class="choices" data-for="${key}">${options.map((o) => `<button type="button" data-value="${o}">${o}</button>`).join("")}</div>`
+            : `<input id="${key}" name="${key}" type="${kind}" ${kind === "number" ? 'step="any"' : ""} autocomplete="off"
+                ${kind === "password" ? `placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"` : ""}>`}
+          <small>${hint}</small></div>`).join("")}</div></div>`).join("")}</div>
+    </div>`;
+  for (const [, , fields] of FIELDS) for (const [key, kind] of fields) if (kind !== "password") choose(key, settings[key]);
 }
+
+function choose(key, value) {
+  $(key).value = value;
+  const choices = document.querySelector(`.choices[data-for="${key}"]`);
+  if (choices) for (const button of choices.children) button.classList.toggle("on", button.dataset.value === value);
+}
+
+$("form").addEventListener("click", (event) => {
+  const option = event.target.closest(".choices button");
+  if (option) return choose(option.parentElement.dataset.for, option.dataset.value);
+  const link = event.target.closest(".subnav a");
+  if (!link) return;
+  section = +link.dataset.section;
+  for (const a of document.querySelectorAll(".subnav a")) a.classList.toggle("on", a === link);
+  for (const panel of document.querySelectorAll("[data-panel]")) panel.hidden = +panel.dataset.panel !== section;
+});
 
 $("form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -268,7 +328,7 @@ $("form").addEventListener("submit", async (event) => {
   document.querySelector(".save").disabled = true;
   try {
     const settings = await api("/api/settings", changes);
-    buildForm(settings); showMode(settings);
+    buildForm(settings); showMode(settings); loadDashboard();
     $("msg").textContent = "Saved."; $("msg").className = "msg win";
   } catch (error) {
     $("msg").textContent = error.message; $("msg").className = "msg loss";

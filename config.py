@@ -28,6 +28,7 @@ DEFAULTS = {
     "SL_POINTS": "500",
     "TP_POINTS": "1000",
     "MAX_DAILY_LOSS": "20",
+    "MAX_TRADES_PER_DAY": "0",
     "MAX_SPREAD_POINTS": "50",
     "MAGIC": "20261003",
     "FILLING": "IOC",
@@ -44,6 +45,7 @@ NUMBER_TYPES = {
     "SL_POINTS": int,
     "TP_POINTS": int,
     "MAX_DAILY_LOSS": float,
+    "MAX_TRADES_PER_DAY": int,
     "MAX_SPREAD_POINTS": int,
     "MAGIC": int,
 }
@@ -75,6 +77,8 @@ def load_config(env_path=ENV_PATH):
         raise SystemExit(f"unknown STRATEGY {config['STRATEGY']!r}, use all or any of: {', '.join(STRATEGIES)}")
     if min(config["LOT"], config["SL_POINTS"], config["TP_POINTS"], config["MAX_DAILY_LOSS"]) <= 0:
         raise SystemExit("LOT, SL_POINTS, TP_POINTS and MAX_DAILY_LOSS must all be above 0")
+    if config["MAX_TRADES_PER_DAY"] < 0:
+        raise SystemExit("MAX_TRADES_PER_DAY must be 0 (no limit) or above")
     if config["CONTRACT_SIZE"] <= 0 or config["AI_BUDGET_USD"] < 0:
         raise SystemExit("CONTRACT_SIZE must be above 0 and AI_BUDGET_USD at least 0")
     if min(config["SL_ATR"], config["TP_ATR"]) < 0 or config["ATR_PERIOD"] < 1:

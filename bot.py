@@ -338,7 +338,8 @@ def check_market(config, state):
     open_count = len(open_positions(config)) + (len(journal.open_trades("paper")) if paper else 0)
     pnl = pnl_today(tick.time) + (journal.profit_since(start, "paper") if paper else 0.0)
     spent = journal.spend(source="bot", since=start) if journal else 0.0
-    blocked = block_reason(state["paused"], open_count, pnl, spread_points, config, spent)
+    traded = journal.trades_opened_since(start, "paper" if paper else "mt5") if journal else 0
+    blocked = block_reason(state["paused"], open_count, pnl, spread_points, config, spent, traded)
     if blocked:
         return remember(state, "skipped: " + blocked)  # checked first: a blocked candle costs no AI call
     experience = journal.experience_text() if journal and brain.learns(config) else ""

@@ -10,7 +10,7 @@ def day_start(server_time):
     return server_time - server_time % SECONDS_PER_DAY
 
 
-def block_reason(paused, open_position_count, pnl_today, spread_points, config, ai_spent_today=0.0):
+def block_reason(paused, open_position_count, pnl_today, spread_points, config, ai_spent_today=0.0, trades_today=0):
     """Return why a new trade is not allowed right now, or None when it is."""
     if paused:
         return "paused"
@@ -18,6 +18,8 @@ def block_reason(paused, open_position_count, pnl_today, spread_points, config, 
         return "position already open"
     if pnl_today <= -config["MAX_DAILY_LOSS"]:
         return f"daily loss limit hit ({pnl_today:.2f})"
+    if config.get("MAX_TRADES_PER_DAY") and trades_today >= config["MAX_TRADES_PER_DAY"]:
+        return f"daily trade limit hit ({trades_today} of {config['MAX_TRADES_PER_DAY']})"
     if spread_points > config["MAX_SPREAD_POINTS"]:
         return f"spread too wide ({spread_points} points)"
     if config["BRAIN"] in ("ai", "hybrid") and ai_spent_today >= config["AI_BUDGET_USD"]:

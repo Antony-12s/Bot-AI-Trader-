@@ -160,6 +160,15 @@ class Journal:
             sql, params = sql + " AND run = ?", params + [run]
         return float(self.connection.execute(sql, params).fetchone()[0])
 
+    def trades_opened_since(self, since, source=None, run=None):
+        """How many trades opened at or after `since` (server time), closed or not."""
+        sql, params = "SELECT COUNT(*) FROM trades WHERE opened_at >= ?", [int(since)]
+        if source is not None:
+            sql, params = sql + " AND source = ?", params + [source]
+        if run is not None:
+            sql, params = sql + " AND run = ?", params + [run]
+        return self.connection.execute(sql, params).fetchone()[0]
+
     def recent_lessons(self, limit=5):
         return self._rows(
             "SELECT * FROM trades WHERE lesson IS NOT NULL ORDER BY closed_at DESC, id DESC LIMIT ?",

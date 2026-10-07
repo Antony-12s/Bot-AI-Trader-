@@ -64,6 +64,21 @@ class RiskTest(unittest.TestCase):
         self.assertIn("daily loss", bot.block_reason(False, 0, -20.0, 30, CONFIG))
         self.assertIn("spread", bot.block_reason(False, 0, 0.0, 51, CONFIG))
 
+    def test_daily_trade_limit(self):
+        capped = dict(CONFIG, MAX_TRADES_PER_DAY=3)
+        self.assertIsNone(bot.block_reason(False, 0, 0.0, 30, capped, trades_today=2))
+        self.assertIn("trade limit", bot.block_reason(False, 0, 0.0, 30, capped, trades_today=3))
+        self.assertIsNone(bot.block_reason(False, 0, 0.0, 30, dict(CONFIG, MAX_TRADES_PER_DAY=0), trades_today=999))
+
+    def test_trades_opened_since_counts_open_and_closed(self):
+        journal = bot.Journal()
+        position = {"side": "buy", "lot": 0.01, "entry": 1.0, "sl": 0.9, "tp": 1.1}
+        for opened_at in (50, 150, 250):
+            journal.open_trade("paper", "r", "X", dict(position, opened_at=opened_at))
+        journal.close_trade(2, 1.1, 200, 1.0, "tp")
+        self.assertEqual(journal.trades_opened_since(100, "paper"), 2)
+        self.assertEqual(journal.trades_opened_since(100, "mt5"), 0)
+
     def test_ai_budget_blocks_every_brain_that_calls_the_ai(self):
         for brain_name in ("ai", "hybrid"):
             ai_config = dict(CONFIG, BRAIN=brain_name)

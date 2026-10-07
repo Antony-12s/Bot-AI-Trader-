@@ -72,8 +72,10 @@ def replay(candles, config, journal, run, digits, log=print):
             if hit:
                 position = settle(journal, run, config, position, candles, index, *hit, log=log)
             continue
-        pnl_today = journal.profit_since(day_start(candle["time"]), "replay", run)
-        blocked = block_reason(False, 0, pnl_today, candle["spread"], config, journal.spend(run=run))
+        start = day_start(candle["time"])
+        pnl_today = journal.profit_since(start, "replay", run)
+        traded = journal.trades_opened_since(start, "replay", run)
+        blocked = block_reason(False, 0, pnl_today, candle["spread"], config, journal.spend(run=run), traded)
         if blocked and blocked.startswith("AI budget"):
             log(f"{stamp(candle['time'])} stopped: {blocked}")
             stopped = "budget"

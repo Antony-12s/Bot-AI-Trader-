@@ -92,7 +92,9 @@ def dashboard(journal, days, now=None):
     decisions = journal._rows(
         "SELECT at, action, reason, source FROM decisions WHERE kind = 'decide' ORDER BY id DESC LIMIT 20"
     )
+    start = day_start(int(now))
     return {
+        "trades_today": journal.trades_opened_since(start, "paper") + journal.trades_opened_since(start, "mt5"),
         "today": round(today, 2),
         "open": len(journal.open_trades()),
         "totals": totals,
