@@ -194,6 +194,15 @@ def ping_webhook(path=ENV_PATH, opener=urllib.request.urlopen):
         raise ValueError(f"could not reach ntfy.sh: {error}") from None
 
 
+def broker_login(body):
+    """Log MT5 into the account from the form. Refused while a bot trades: it would switch under it."""
+    if bot_running():
+        raise ValueError("Stop the bot before switching accounts")
+    import broker
+    broker.login(body.get("login", ""), body.get("password", ""), body.get("server", ""))
+    return broker.status()
+
+
 def read_env(path=ENV_PATH):
     values = dict(DEFAULTS)
     if path.exists():
@@ -296,6 +305,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, public_settings())
         if url.path == "/api/bot":
             return self.reply(200, bot_status())
+        if url.path in ("/api/broker", "/api/broker/symbols"):
+            import broker  # here: the MetaTrader5 package only loads once the page asks for it
+            return self.reply(200, broker.status() if url.path == "/api/broker" else broker.symbols())
         self.reply(404, {"error": "not found"})
 
     def do_POST(self):
@@ -311,6 +323,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/signals/switch": lambda: (switch_source(body.get("source"), bool(body.get("on"))), public_settings())[1],
             "/api/signals/rotate": lambda: (rotate_topic(), public_settings())[1],
             "/api/signals/ping": lambda: (ping_webhook(), {"sent": True})[1],
+            "/api/broker/login": lambda: broker_login(body),  # the password is not stored or logged
         }
         action = actions.get(urlparse(self.path).path)
         if action is None:

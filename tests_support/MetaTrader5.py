@@ -23,5 +23,5 @@ positions_get = history_deals_get = copy_rates_from_pos = order_send = last_erro
 DEAL_ENTRY_IN, DEAL_ENTRY_OUT, DEAL_ENTRY_INOUT, DEAL_ENTRY_OUT_BY = 0, 1, 2, 3
 DEAL_REASON_CLIENT, DEAL_REASON_MOBILE, DEAL_REASON_WEB, DEAL_REASON_EXPERT = 0, 1, 2, 3
 DEAL_REASON_SL, DEAL_REASON_TP, DEAL_REASON_SO = 4, 5, 6
-terminal_info = _unavailable
+terminal_info = login = _unavailable
 symbols_get = _unavailable

@@ -61,7 +61,7 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: tran
 .list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .agent { background: var(--panel2); border: 1px solid transparent; border-radius: 12px; padding: 10px 12px; cursor: pointer; }
 .agent.on { border-color: var(--accent); background: #24170a; }
-.agent .sub::before { content: "â—"; margin-right: 6px; color: var(--muted); }
+.agent .sub::before { content: "●"; margin-right: 6px; color: var(--muted); }
 .agent.armed .sub::before { color: var(--win); }
 .agent-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .switch { width: 46px; height: 26px; border-radius: 13px; background: var(--line); border: 0; position: relative; cursor: pointer; flex: none; }
@@ -81,6 +81,16 @@ details { background: var(--panel2); border-radius: 12px; padding: 12px; margin-
 summary { cursor: pointer; font-weight: 600; }
 details ol { padding-left: 20px; color: var(--muted); }
 code { background: var(--bg); padding: 1px 6px; border-radius: 6px; color: var(--text); }
+.balance { text-align: right; line-height: 1.1; }
+.balance b { font-size: 20px; }
+.balance span { display: block; font-size: 11px; font-weight: 800; letter-spacing: .1em; }
+.balance.demo span { color: #60a5fa; } .balance.real span { color: var(--loss); } .balance.real b { color: var(--win); }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.pill.demo { color: #60a5fa; background: #0f1d30; } .pill.real { color: var(--loss); background: #2a1010; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin-top: 12px; font-size: 14px; }
+.kv span { color: var(--muted); }
+.sym { background: var(--panel2); border-radius: 10px; padding: 9px 12px; cursor: pointer; }
+.sym.on { color: var(--accent); outline: 1px solid var(--accent); }
 .settings-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .settings { display: grid; grid-template-columns: 240px 1fr; gap: 18px; align-items: start; }
 .subnav { display: flex; flex-direction: column; gap: 4px; }
@@ -93,7 +103,7 @@ code { background: var(--bg); padding: 1px 6px; border-radius: 6px; color: var(-
 @media (max-width: 860px) { .settings { grid-template-columns: 1fr; } .subnav { flex-direction: row; flex-wrap: wrap; } }
 .top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .state { font-size: 13px; font-weight: 700; color: var(--muted); }
-.state::before { content: "â—"; margin-right: 6px; }
+.state::before { content: "●"; margin-right: 6px; }
 .state.running { color: var(--win); }
 .state.stopping { color: var(--accent); }
 .go { background: var(--accent); color: #1a0d00; border: 0; border-radius: 12px; padding: 10px 22px; font: inherit; font-weight: 800; cursor: pointer; }
@@ -114,13 +124,15 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
 <body>
 <nav>
   <div class="brand"><img id="mark" alt="" width="26" height="26">TRADE<b>BOT</b></div>
-  <div class="group">â€¢ TRADE</div>
+  <div class="group">• TRADE</div>
   <a href="#dashboard" data-page="dashboard">Dashboard</a>
   <a href="#history" data-page="history">History</a>
   <a href="#signals" data-page="signals">Signals</a>
-  <div class="group">â€¢ AUTOMATION</div>
+  <div class="group">• AUTOMATION</div>
   <a href="#agents" data-page="agents">Agents</a>
-  <div class="group">â€¢ APP</div>
+  <div class="group">• BROKER</div>
+  <a href="#broker" data-page="broker">MetaTrader 5 <span id="navacct"></span></a>
+  <div class="group">• APP</div>
   <a href="#settings" data-page="settings">Settings</a>
   <div class="counter">
     <div class="label">Trades today</div>
@@ -133,6 +145,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
     <div><h1 id="title">Dashboard</h1><div class="sub" id="where"></div></div>
     <div class="top">
       <div class="seg modes" id="modes"><button data-mode="dry">Paper</button><button data-mode="demo">Demo</button><button data-mode="live">Live</button></div>
+      <div class="balance" id="balance"></div>
       <span class="state" id="state">checking</span>
       <button class="go" id="go" disabled>Start</button>
     </div>
@@ -171,7 +184,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <section id="signals" hidden>
     <div class="sub" style="margin: -8px 0 14px">Turn sources on and the bot trades what they deliver. Every signal still passes your risk limits, lot and stops.</div>
     <div class="three">
-      <div class="card"><div class="label" style="color: var(--accent)">â€¢ Sources</div><div class="list" id="sourcelist"></div></div>
+      <div class="card"><div class="label" style="color: var(--accent)">• Sources</div><div class="list" id="sourcelist"></div></div>
       <div class="card" id="source"></div>
       <div class="card">
         <div class="chart-head"><div class="label">Signal history</div>
@@ -185,9 +198,31 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
   <section id="agents" hidden>
     <div class="sub" style="margin: -8px 0 14px">Each agent is one rules strategy. Armed agents propose trades; risk limits still decide. Changes apply when the bot starts.</div>
     <div class="three">
-      <div class="card"><div class="label" style="color: var(--accent)">â€¢ Your agents</div><div class="list" id="agentlist"></div></div>
+      <div class="card"><div class="label" style="color: var(--accent)">• Your agents</div><div class="list" id="agentlist"></div></div>
       <div class="card" id="agent"></div>
-      <div class="card"><div class="label" style="color: var(--accent)">â€¢ Decisions</div><div class="feed" id="agentfeed"></div></div>
+      <div class="card"><div class="label" style="color: var(--accent)">• Decisions</div><div class="feed" id="agentfeed"></div></div>
+    </div>
+  </section>
+
+  <section id="broker" hidden>
+    <div class="sub" style="margin: -8px 0 14px">The bot trades through this MT5 terminal and whatever account it is logged into.</div>
+    <div class="three">
+      <div class="card" id="acct"></div>
+      <form class="card" id="loginform" autocomplete="off">
+        <b>Log in to a broker account</b>
+        <div class="sub" style="margin: 4px 0 12px">Sent straight to MT5, like its own login window. TradeBot never stores or shows your password.</div>
+        <div class="field"><label for="acctno">Account number</label><input id="acctno" name="login" inputmode="numeric" required></div>
+        <div class="field" style="margin-top: 12px"><label for="acctpw">Password</label><input id="acctpw" name="password" type="password" autocomplete="current-password" required></div>
+        <div class="field" style="margin-top: 12px"><label for="acctsrv">Server</label><input id="acctsrv" name="server" required>
+          <small>Exactly as MT5 lists it, e.g. XMGlobal-MT5 6. Use the trading password, not the investor one.</small></div>
+        <button class="save" type="submit" style="margin-top: 14px">Log in</button>
+        <div class="msg" id="loginmsg" style="margin: 10px 0 0"></div>
+      </form>
+      <div class="card">
+        <b>Symbol to trade</b> <span class="sub" id="cursym"></span>
+        <input id="symsearch" placeholder="Search, e.g. GOLD, EURUSD" style="margin-top: 10px">
+        <div class="feed" id="symlist" style="max-height: 360px"></div>
+      </div>
     </div>
   </section>
 
@@ -253,7 +288,7 @@ function showMode(settings) {
   mode = settings.MODE;
   maxTrades = +settings.MAX_TRADES_PER_DAY || 0;
   for (const button of $("modes").children) button.classList.toggle("on", button.dataset.mode === mode);
-  $("where").textContent = `${settings.SYMBOL} Â· ${settings.TIMEFRAME} Â· brain ${settings.BRAIN}` + (mode === "live" ? " Â· REAL MONEY" : "");
+  $("where").textContent = `${settings.SYMBOL} · ${settings.TIMEFRAME} · brain ${settings.BRAIN}` + (mode === "live" ? " · REAL MONEY" : "");
 }
 
 $("modes").addEventListener("click", async (event) => {
@@ -270,7 +305,7 @@ $("modes").addEventListener("click", async (event) => {
 async function loadBot() {
   const bot = await api("/api/bot");
   const state = bot.stopping ? "stopping" : bot.running ? "running" : "stopped";
-  $("state").textContent = state === "running" ? "Running" : state === "stopping" ? "Stoppingâ€¦" : "Stopped";
+  $("state").textContent = state === "running" ? "Running" : state === "stopping" ? "Stopping…" : "Stopped";
   $("state").className = "state " + state;
   $("go").textContent = bot.running ? "Stop" : "Start";
   $("go").className = "go" + (bot.running ? " stop" : "");
@@ -295,10 +330,10 @@ async function loadHistory() {
   const trades = await api("/api/history");
   $("trades").innerHTML = trades.length ? trades.map((t) => `
     <tr class="trade" data-id="${t.id}"><td>${when(t.closed_at)}</td><td class="${esc(t.side)}">${esc(t.side).toUpperCase()}</td><td>${esc(t.symbol)}</td>
-    <td class="num">${t.lot}</td><td class="num">${t.entry}</td><td class="num">${t.exit ?? "â€”"}</td>
-    <td class="num ${t.profit > 0 ? "win" : t.profit < 0 ? "loss" : ""}">${t.profit == null ? "â€”" : money(t.profit)}</td>
-    <td>${esc(t.outcome ?? "open")}</td><td>${esc(t.brain ?? "â€”")}</td><td>${esc(t.source)}</td></tr>
-    <tr class="detail" data-for="${t.id}" hidden><td colspan="10"><b>Why:</b> ${esc(t.reason || "â€”")}${t.lesson ? `<br><b>Lesson:</b> ${esc(t.lesson)}` : ""}</td></tr>`).join("")
+    <td class="num">${t.lot}</td><td class="num">${t.entry}</td><td class="num">${t.exit ?? "—"}</td>
+    <td class="num ${t.profit > 0 ? "win" : t.profit < 0 ? "loss" : ""}">${t.profit == null ? "—" : money(t.profit)}</td>
+    <td>${esc(t.outcome ?? "open")}</td><td>${esc(t.brain ?? "—")}</td><td>${esc(t.source)}</td></tr>
+    <tr class="detail" data-for="${t.id}" hidden><td colspan="10"><b>Why:</b> ${esc(t.reason || "—")}${t.lesson ? `<br><b>Lesson:</b> ${esc(t.lesson)}` : ""}</td></tr>`).join("")
     : `<tr><td colspan="10" class="empty">No trades yet</td></tr>`;
 }
 
@@ -326,14 +361,14 @@ async function loadDashboard() {
   const data = await api(`/api/dashboard?days=${days}`);
   const t = data.totals;
   $("today").textContent = money(data.today); tone($("today"), data.today);
-  $("winrate").textContent = t.trades ? Math.round(t.win_rate * 100) + "%" : "â€”";
+  $("winrate").textContent = t.trades ? Math.round(t.win_rate * 100) + "%" : "—";
   $("wl").innerHTML = `<span class="win">${t.wins}W</span> / <span class="loss">${t.losses}L</span>`;
   $("open").textContent = data.open;
   $("tcount").textContent = data.trades_today;
-  $("tmax").textContent = maxTrades ? ` / ${maxTrades}` : " Â· no daily limit";
+  $("tmax").textContent = maxTrades ? ` / ${maxTrades}` : " · no daily limit";
   $("tbar").style.width = maxTrades ? Math.min(100, data.trades_today / maxTrades * 100) + "%" : "0";
   $("spend").textContent = "$" + data.ai_spend.toFixed(2);
-  $("stats").textContent = t.trades ? `net ${money(t.net)} Â· max drawdown $${t.max_drawdown.toFixed(2)} Â· ${t.trades} trades` : "";
+  $("stats").textContent = t.trades ? `net ${money(t.net)} · max drawdown $${t.max_drawdown.toFixed(2)} · ${t.trades} trades` : "";
   drawChart(data.equity);
   $("feed").innerHTML = feedHtml(data.decisions);
 }
@@ -397,7 +432,7 @@ $("range").addEventListener("click", (event) => {
 
 let agentList = [], picked = null;
 const feedHtml = (items) => items.length ? items.map((d) => `
-  <div class="item"><b class="${esc(d.action)}">${esc(d.action).toUpperCase()}</b><span class="sub">${when(d.at)} Â· ${esc(d.source)}</span>
+  <div class="item"><b class="${esc(d.action)}">${esc(d.action).toUpperCase()}</b><span class="sub">${when(d.at)} · ${esc(d.source)}</span>
   <div>${esc(d.reason)}</div></div>`).join("") : `<div class="empty">No decisions yet</div>`;
 
 async function loadAgents() {
@@ -405,20 +440,20 @@ async function loadAgents() {
   if (!agentList.some((a) => a.name === picked)) picked = (agentList.find((a) => a.armed) || agentList[0]).name;
   $("agentlist").innerHTML = agentList.map((a) => `
     <div class="agent ${a.armed ? "armed" : ""} ${a.name === picked ? "on" : ""}" data-name="${esc(a.name)}">
-      <b>${esc(a.name)}</b><div class="sub">${a.totals.trades ? Math.round(a.totals.win_rate * 100) + "% of " + a.totals.trades : "no trades yet"} Â· ${a.armed ? "armed" : "off"}</div></div>`).join("");
+      <b>${esc(a.name)}</b><div class="sub">${a.totals.trades ? Math.round(a.totals.win_rate * 100) + "% of " + a.totals.trades : "no trades yet"} · ${a.armed ? "armed" : "off"}</div></div>`).join("");
   const a = agentList.find((x) => x.name === picked), t = a.totals;
   const verdict = t.trades >= 100 ? "enough to judge; arming is still your call" : t.trades >= 30 ? "an early read, keep watching" : "too few to judge yet: replay it first (train.bat)";
   $("agent").innerHTML = `
     <div class="agent-head"><div><b style="font-size: 20px">${esc(a.name)}</b><div class="sub">${esc(a.about)}</div></div>
       <button class="switch ${a.armed ? "on" : ""}" id="arm" title="${a.armed ? "Disarm" : "Arm"}"></button></div>
     <div class="mini">
-      <div><b class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${t.trades ? Math.round(t.win_rate * 100) + "%" : "â€”"}</b><span class="sub">win rate Â· ${t.wins}W / ${t.losses}L</span></div>
-      <div><b>${t.trades}</b><span class="sub">settled Â· ${a.live_trades} paper/live, ${t.trades - a.live_trades} replay</span></div>
-      <div><b class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${money(t.net)}</b><span class="sub">net Â· profit factor ${t.profit_factor ?? "â€”"}</span></div>
-      <div><b>${t.longest_losing_streak}</b><span class="sub">longest losing streak Â· drawdown $${t.max_drawdown.toFixed(2)}</span></div>
+      <div><b class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${t.trades ? Math.round(t.win_rate * 100) + "%" : "—"}</b><span class="sub">win rate · ${t.wins}W / ${t.losses}L</span></div>
+      <div><b>${t.trades}</b><span class="sub">settled · ${a.live_trades} paper/live, ${t.trades - a.live_trades} replay</span></div>
+      <div><b class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${money(t.net)}</b><span class="sub">net · profit factor ${t.profit_factor ?? "—"}</span></div>
+      <div><b>${t.longest_losing_streak}</b><span class="sub">longest losing streak · drawdown $${t.max_drawdown.toFixed(2)}</span></div>
     </div>
     <div class="ladder"><div class="label">Trust ladder</div><div class="meter"><i style="width: ${a.trust * 100}%"></i></div>
-      <div class="sub" style="margin-top: 8px"><b style="color: var(--text)">${t.trades} settled</b> Â· ${verdict}</div></div>`;
+      <div class="sub" style="margin-top: 8px"><b style="color: var(--text)">${t.trades} settled</b> · ${verdict}</div></div>`;
   $("agentfeed").innerHTML = feedHtml(a.decisions);
 }
 
@@ -438,9 +473,9 @@ let sig = null, pickedSource = "webhook", sigFilter = "all";
 async function loadSignals() {
   sig = await api("/api/signals");
   const sources = [
-    ["strategies", "Strategies", `${sig.strategies.armed} of ${sig.strategies.total} armed Â· brain ${sig.strategies.brain}`, true],
-    ["webhook", "TradingView", sig.webhook.on ? "on Â· alerts via webhook" : "off Â· alerts from your charts", sig.webhook.on],
-    ["telegram", "Telegram", sig.telegram.ready ? (sig.telegram.on ? "on Â· /buy and /sell" : "off Â· /buy and /sell") : "needs a Telegram bot first", sig.telegram.on],
+    ["strategies", "Strategies", `${sig.strategies.armed} of ${sig.strategies.total} armed · brain ${sig.strategies.brain}`, true],
+    ["webhook", "TradingView", sig.webhook.on ? "on · alerts via webhook" : "off · alerts from your charts", sig.webhook.on],
+    ["telegram", "Telegram", sig.telegram.ready ? (sig.telegram.on ? "on · /buy and /sell" : "off · /buy and /sell") : "needs a Telegram bot first", sig.telegram.on],
   ];
   $("sourcelist").innerHTML = sources.map(([id, name, sub, on]) => `
     <div class="agent ${on ? "armed" : ""} ${id === pickedSource ? "on" : ""}" data-source="${id}"><b>${name}</b><div class="sub">${esc(sub)}</div></div>`).join("");
@@ -469,7 +504,7 @@ async function loadSignals() {
         <button class="switch ${sig.telegram.on ? "on" : ""}" data-switch="telegram"></button></div>
       <div class="sub" style="margin-top: 16px">${sig.telegram.ready
         ? "Only your own chat (TELEGRAM_CHAT_ID) is obeyed; messages from anyone else are ignored."
-        : "Set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID in Settings â†’ Keys &amp; Telegram first."}</div>
+        : "Set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID in Settings → Keys &amp; Telegram first."}</div>
       <details><summary>Setup guide: Telegram</summary><ol>
         <li>Create a bot with @BotFather and put its token in Settings.</li>
         <li>Message your bot once; the bot log shows your chat id. Put it in Settings.</li>
@@ -478,7 +513,7 @@ async function loadSignals() {
       </ol></details>`;
   const rows = sig.history.filter((s) => sigFilter === "all" || s.reason.startsWith(sigFilter));
   $("sigfeed").innerHTML = rows.length ? rows.map((s) => `
-    <div class="item"><b class="${esc(s.action)}">${esc(s.action).toUpperCase()}</b><span class="sub">${when(s.at)} Â· ${esc(s.source)}</span>
+    <div class="item"><b class="${esc(s.action)}">${esc(s.action).toUpperCase()}</b><span class="sub">${when(s.at)} · ${esc(s.source)}</span>
     <div>${esc(s.reason)}</div></div>`).join("") : `<div class="empty">Nothing from this source yet</div>`;
 }
 
@@ -515,7 +550,60 @@ $("source").addEventListener("click", async (event) => {
   loadSignals();
 });
 
-const PAGES = { dashboard: "Dashboard", history: "History", signals: "Signals", agents: "AI Agents", settings: "Settings" };
+let account = null, symbolNames = null, currentSymbol = "";
+async function loadBroker() {
+  account = await api("/api/broker");
+  const kind = account.logged_in ? (account.demo ? "demo" : "real") : "";
+  $("balance").className = "balance " + kind;
+  $("balance").innerHTML = account.logged_in ? `<b>${account.balance.toFixed(2)} ${esc(account.currency)}</b><span>${account.demo ? "DEMO" : "REAL MONEY"}</span>` : "";
+  $("navacct").innerHTML = kind ? `<span class="pill ${kind}">${kind.toUpperCase()}</span>` : "";
+  $("acct").innerHTML = !account.connected ? `<b>MT5 not reachable</b><div class="sub" style="margin-top: 8px">${esc(account.error)}</div>
+      <div class="sub" style="margin-top: 8px">Install MetaTrader 5 from your broker and open it once.</div>`
+    : !account.logged_in ? `<b>Terminal open, no account</b><div class="sub" style="margin-top: 8px">Log in with the form to start trading through it.</div>`
+    : `<div class="agent-head"><b style="font-size: 20px">${esc(account.login)}</b><span class="pill ${kind}">${kind === "demo" ? "DEMO" : "REAL MONEY"}</span></div>
+      <div class="sub">${esc(account.name)} · ${esc(account.company)}</div>
+      <div class="kv"><span>Server</span><b>${esc(account.server)}</b>
+        <span>Connection</span><b class="${account.online ? "win" : "loss"}">${account.online ? "online" : "offline, MT5 is reconnecting"}</b>
+        <span>Balance</span><b>${account.balance.toFixed(2)} ${esc(account.currency)}</b>
+        <span>Equity</span><b>${account.equity.toFixed(2)} ${esc(account.currency)}</b>
+        <span>Leverage</span><b>1:${account.leverage}</b></div>
+      ${kind === "real" && mode !== "live" ? `<div class="sub" style="margin-top: 12px">Real account: the bot only trades it in Live mode. Paper mode never sends orders; Demo mode refuses a real account.</div>` : ""}`;
+  if (account.logged_in && !$("acctsrv").value) $("acctsrv").value = account.server;
+}
+
+async function loadSymbols() {
+  currentSymbol = (await api("/api/settings")).SYMBOL;
+  $("cursym").textContent = `now ${currentSymbol}`;
+  symbolNames = symbolNames || await api("/api/broker/symbols");
+  const query = $("symsearch").value.trim().toUpperCase();
+  const shown = symbolNames.filter((name) => name.toUpperCase().includes(query)).slice(0, 80);
+  $("symlist").innerHTML = shown.length ? shown.map((name) => `<div class="sym ${name === currentSymbol ? "on" : ""}" data-sym="${esc(name)}">${esc(name)}</div>`).join("")
+    : `<div class="empty">${symbolNames.length ? "No match" : "No symbols: is MT5 logged in?"}</div>`;
+}
+
+$("symsearch").addEventListener("input", loadSymbols);
+$("symlist").addEventListener("click", async (event) => {
+  const name = event.target.dataset.sym;
+  if (!name || name === currentSymbol) return;
+  try {
+    const settings = await api("/api/settings", { SYMBOL: name });
+    showMode(settings); buildForm(settings); loadSymbols();
+    if ($("go").textContent === "Stop") alert("Saved. Stop and Start the bot to trade " + name + ".");
+  } catch (error) { alert(error.message); }
+});
+$("loginform").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = Object.fromEntries(new FormData($("loginform")));
+  $("acctpw").value = "";  // do not keep the password in the page
+  $("loginmsg").textContent = "Logging in…"; $("loginmsg").className = "msg";
+  try {
+    await api("/api/broker/login", form);
+    $("loginmsg").textContent = "Logged in."; $("loginmsg").className = "msg win";
+    symbolNames = null; loadBroker(); loadSymbols();
+  } catch (error) { $("loginmsg").textContent = error.message; $("loginmsg").className = "msg loss"; }
+});
+
+const PAGES = { dashboard: "Dashboard", history: "History", signals: "Signals", agents: "AI Agents", broker: "MetaTrader 5", settings: "Settings" };
 function route() {
   const page = location.hash.slice(1) in PAGES ? location.hash.slice(1) : "dashboard";
   for (const id in PAGES) $(id).hidden = id !== page;
@@ -524,6 +612,7 @@ function route() {
   if (page === "history") loadHistory();
   if (page === "agents") loadAgents();
   if (page === "signals") loadSignals();
+  if (page === "broker") { loadBroker(); loadSymbols(); }
 }
 addEventListener("hashchange", route);
 
@@ -532,7 +621,9 @@ addEventListener("hashchange", route);
   const settings = await api("/api/settings");
   showMode(settings); buildForm(settings);
   await Promise.all([loadDashboard(), loadBot()]);
+  loadBroker().catch(() => {});  // MT5 may be slow to start; the rest of the page does not wait for it
   setInterval(loadDashboard, 15000);
+  setInterval(() => loadBroker().catch(() => {}), 15000);
   setInterval(loadBot, 3000);
 })();
 </script>
