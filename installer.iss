@@ -26,16 +26,17 @@ Source: ".env.example"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\TradeBot\Start bot"; Filename: "{app}\start.bat"; WorkingDir: "{app}"
-Name: "{autoprograms}\TradeBot\Dashboard"; Filename: "{app}\dashboard.bat"; WorkingDir: "{app}"
-Name: "{autoprograms}\TradeBot\Settings"; Filename: "{app}\settings.bat"; WorkingDir: "{app}"
+; The app window is the main entry; Start / Stop live in it. ui.py hides its console.
+Name: "{autoprograms}\TradeBot\TradeBot"; Filename: "{app}\TradeBot.exe"; Parameters: "ui.py"; WorkingDir: "{app}"
+Name: "{autoprograms}\TradeBot\Start bot (console)"; Filename: "{app}\start.bat"; WorkingDir: "{app}"
+Name: "{autoprograms}\TradeBot\Setup wizard"; Filename: "{app}\settings.bat"; WorkingDir: "{app}"
 Name: "{autoprograms}\TradeBot\Train AI"; Filename: "{app}\train.bat"; WorkingDir: "{app}"
 Name: "{autoprograms}\TradeBot\Run forever (VPS)"; Filename: "{app}\run_forever.bat"; WorkingDir: "{app}"
 Name: "{autoprograms}\TradeBot\Uninstall TradeBot"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\TradeBot"; Filename: "{app}\start.bat"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\TradeBot"; Filename: "{app}\TradeBot.exe"; Parameters: "ui.py"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\start.bat"; WorkingDir: "{app}"; Description: "Launch TradeBot"; Flags: postinstall nowait skipifsilent shellexec
+Filename: "{app}\TradeBot.exe"; Parameters: "ui.py"; WorkingDir: "{app}"; Description: "Launch TradeBot"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 ; Drop the logon task install_autostart.bat may have created; harmless when it does not exist.

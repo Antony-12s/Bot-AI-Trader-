@@ -1,4 +1,4 @@
-"""Local web dashboard: python ui.py, then the browser opens http://127.0.0.1:8765
+"""Desktop dashboard: python ui.py opens the TradeBot window (--browser: a browser tab instead).
 
 View of journal.db (today, win rate, equity curve, decisions, trade history), a form that
 rewrites .env, and Start / Stop for bot.py. Listens on 127.0.0.1 only.
@@ -213,13 +213,37 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(400, {"error": str(error)})
 
 
+def open_window(url):
+    """Own app window (WebView2 through pywebview); False when pywebview is missing."""
+    try:
+        import webview
+    except ImportError:
+        return False
+    window = webview.create_window("TradeBot", url, width=1360, height=860, min_size=(900, 600), background_color="#0b1019")
+    if sys.platform == "win32":  # the console behind the window has nothing to show
+        import ctypes
+        ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+    # A shortcut's minimized/hidden start applies to the first window shown: bring this one up regardless.
+    webview.start(lambda: (window.restore(), window.show()))  # blocks until closed; a bot started here keeps running
+    return True
+
+
 def main():
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     url = f"http://127.0.0.1:{PORT}"
-    print(f"Dashboard at {url}  (close this window to stop it)")
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    except OSError:  # already open: show that one instead of failing
+        server = None
+    else:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        print(f"Dashboard at {url}")
     if "--no-browser" not in sys.argv:
+        if "--browser" not in sys.argv and open_window(url):
+            return  # the window closed, the dashboard goes with it
         webbrowser.open(url)
-    server.serve_forever()
+    if server:
+        print("Close this window to stop the dashboard.")
+        threading.Event().wait()
 
 
 if __name__ == "__main__":
