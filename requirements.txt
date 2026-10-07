@@ -3,3 +3,6 @@ anthropic
 # time zones for zoneinfo (mr_intraday.py): Windows ships no tz database
 tzdata
 pywebview
+# tray icon: the app keeps running after its window closes
+pystray
+pillow

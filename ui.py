@@ -5,6 +5,7 @@ rewrites .env, and Start / Stop for bot.py. Listens on 127.0.0.1 only.
 """
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -42,13 +43,15 @@ def bot_running(now=None):
         return False
 
 
-def start_bot():
+def start_bot(append=False):
+    """append: a watchdog restart keeps the log of the run that died, above the new one."""
     global bot_process
     with BOT_LOCK:  # two quick clicks must not start two bots trading the same account
         if bot_running():
             raise ValueError("the bot is already running")
         STOP_FLAG.unlink(missing_ok=True)
-        with open(LOG_PATH, "w", encoding="utf-8") as log:
+        watchdog["started"] = time.time()
+        with open(LOG_PATH, "a" if append else "w", encoding="utf-8") as log:
             # sys.executable is python, or TradeBot.exe which runs bot.py the same way (launcher.py)
             bot_process = subprocess.Popen(
                 [sys.executable, "bot.py"], cwd=APP_DIR, stdout=log, stderr=subprocess.STDOUT,
@@ -329,6 +332,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, public_settings())
         if url.path == "/api/bot":
             return self.reply(200, bot_status())
+        if url.path == "/api/app":
+            return self.reply(200, {"run_at_login": __import__("desktop").run_at_login()})
         if url.path in ("/api/broker", "/api/broker/symbols"):
             import broker  # here: the MetaTrader5 package only loads once the page asks for it
             return self.reply(200, broker.status() if url.path == "/api/broker" else broker.symbols())
@@ -349,6 +354,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/signals/ping": lambda: (ping_webhook(), {"sent": True})[1],
             "/api/broker/login": lambda: broker_login(body),  # the password is not stored or logged
             "/api/ai/test": lambda: test_ai_key(body),  # the key is only sent to its own AI company
+            "/api/app/show": lambda: (show_window and show_window(), {"shown": bool(show_window)})[1],
+            "/api/app/login": lambda: {"run_at_login": __import__("desktop").run_at_login(bool(body.get("on")))},
             "/api/broker/install": lambda: (__import__("broker").start_install(), {"started": True})[1],
         }
         action = actions.get(urlparse(self.path).path)
@@ -365,17 +372,135 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(500, {"error": f"{type(error).__name__}: {error}"})
 
 
-def open_window(url):
-    """Own app window (WebView2 through pywebview); False when it cannot open, so the caller uses a browser."""
+class Server(ThreadingHTTPServer):
+    """One app per port. The stdlib default (SO_REUSEADDR) lets a second app bind the same port on
+    Windows, so both answer at random and the second never learns the first is open."""
+    allow_reuse_address = False
+    daemon_threads = True
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+RESTART_SECONDS = 30  # wait before restarting a bot that died on its own
+QUICK_CRASH_SECONDS = 120  # a bot that dies sooner than this after a start counts as a quick crash
+CRASH_LIMIT = 5  # quick crashes in a row before the watchdog gives up (a bad setting would loop forever)
+watchdog = {"crashes": 0, "started": 0.0, "restart_at": None}
+
+
+def log_line(text):
+    with open(LOG_PATH, "a", encoding="utf-8") as log:
+        log.write(f"{time.strftime('%H:%M:%S')} {text}\n")
+
+
+def watch_bot(now):
+    """One watchdog step for the bot this app started. Returns what it did (for the log and the tests)."""
+    global bot_process
+    if watchdog["restart_at"] is not None and now >= watchdog["restart_at"]:
+        watchdog["restart_at"] = None
+        if STOP_FLAG.exists():
+            return "stopped"  # the user pressed Stop while it waited
+        try:
+            start_bot(append=True)
+        except ValueError:  # another bot is already running (start.bat, a second app)
+            return "already running"
+        watchdog["started"] = now
+        return "restarted"
+    process = bot_process
+    if process is None or process.poll() is None:
+        return "ok"
+    bot_process = None
+    # Its heartbeat outlives a hard kill and would make the restart think a bot still runs.
+    # A real second bot is still refused by bot.py's own single-instance lock.
+    ALIVE.unlink(missing_ok=True)
+    if STOP_FLAG.exists():  # bot.py leaves it when it stops on request (Stop, /stop)
+        watchdog["crashes"] = 0
+        return "stopped"
+    quick = now - watchdog["started"] < QUICK_CRASH_SECONDS
+    watchdog["crashes"] = watchdog["crashes"] + 1 if quick else 1
+    if watchdog["crashes"] > CRASH_LIMIT:
+        watchdog["crashes"] = 0
+        log_line(f"the bot stopped {CRASH_LIMIT + 1} times in a row right after starting; not restarting it. Read the lines above, fix it, press Start.")
+        return "gave up"
+    watchdog["restart_at"] = now + RESTART_SECONDS
+    log_line(f"the bot stopped unexpectedly (exit code {process.returncode}); restarting it in {RESTART_SECONDS} s")
+    return "restarting"
+
+
+def run_watchdog():
+    while True:
+        try:
+            watch_bot(time.time())
+        except Exception as error:  # the watchdog must outlive any surprise
+            print("watchdog:", error)
+        time.sleep(2)
+
+
+def start_app_bot():
+    """The 'start the bot when TradeBot opens' setting."""
+    if read_env().get("AUTO_START_BOT") == "on" and not bot_running():
+        try:
+            start_bot()
+            watchdog["started"] = time.time()
+        except ValueError:
+            pass
+
+
+show_window = None  # set once the app window exists: a second launch asks this one to come forward
+
+
+def ask_running_app_to_show():
+    """Another TradeBot already holds the port: bring its window forward instead of opening a second one."""
+    request = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/app/show", data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=5):
+            return True
+    except OSError:
+        return False
+
+
+def open_window(url, background=False):
+    """Own app window (WebView2 through pywebview) with a tray icon; closing it hides to the tray.
+
+    False when it cannot open, so the caller uses a browser instead.
+    """
+    global show_window
     import ctypes
     try:
         import webview
-        window = webview.create_window("TradeBot", url, width=1360, height=860, min_size=(900, 600), background_color="#0b1019")
-        if sys.platform == "win32":  # the console behind the window has nothing to show
+        window = webview.create_window("TradeBot", url, width=1360, height=860, min_size=(900, 600),
+                                       background_color="#0b1019", hidden=background)
+        quitting = threading.Event()
+
+        def bring_forward():
+            window.show()
+            window.restore()
+
+        def quit_app():
+            quitting.set()
+            window.destroy()
+
+        show_window = bring_forward
+        if sys.platform == "win32":  # running from source: the console behind the window has nothing to show
             ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 0)
+        try:
+            import desktop
+            icon = desktop.tray(bring_forward, lambda: start_bot() if not bot_running() else None, stop_bot,
+                                quit_app, lambda: (stop_bot(), quit_app()))
+        except Exception as error:  # no tray (pystray missing): closing the window quits as before
+            print("tray icon unavailable:", error)
+            icon = None
+            quitting.set()
+        # With a tray, the window's X hides it and the app keeps running; quitting is in the tray menu.
+        window.events.closing += lambda: True if quitting.is_set() else (window.hide(), False)[1]
         # A shortcut's minimized/hidden start applies to the first window shown: bring this one up regardless.
         # gui pinned to WebView2: without it pywebview may fall back to the old IE engine, which breaks the page.
-        webview.start(lambda: (window.restore(), window.show()), gui="edgechromium")  # blocks until closed
+        webview.start(None if background else bring_forward, gui="edgechromium")  # blocks until quit
+        if icon:
+            icon.stop()
         return True
     except Exception as error:  # no pywebview or no WebView2 runtime (older Windows 10): use the browser
         print("app window unavailable, opening the browser instead:", error)
@@ -386,16 +511,21 @@ def open_window(url):
 
 def main():
     url = f"http://127.0.0.1:{PORT}"
+    background = "--background" in sys.argv  # started with Windows: straight to the tray
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    except OSError:  # already open: show that one instead of failing
+        server = Server(("127.0.0.1", PORT), Handler)
+    except OSError:  # already open: bring that one forward instead of a second app
+        if not background and ask_running_app_to_show():
+            return
         server = None
     else:
         threading.Thread(target=server.serve_forever, daemon=True).start()
+        threading.Thread(target=run_watchdog, daemon=True).start()
+        start_app_bot()
         print(f"Dashboard at {url}")
     if "--no-browser" not in sys.argv:
-        if "--browser" not in sys.argv and open_window(url):
-            return  # the window closed, the dashboard goes with it
+        if "--browser" not in sys.argv and open_window(url, background):
+            return  # quit from the tray; a bot started here keeps running unless "Stop the bot and quit"
         webbrowser.open(url)
     if server:
         print("Close this window to stop the dashboard.")

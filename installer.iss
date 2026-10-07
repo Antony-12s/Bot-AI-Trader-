@@ -40,6 +40,10 @@ Name: "{autodesktop}\TradeBot"; Filename: "{app}\TradeBot.exe"; Parameters: "ui.
 [Run]
 Filename: "{app}\TradeBot.exe"; Parameters: "ui.py"; WorkingDir: "{app}"; Description: "Launch TradeBot"; Flags: postinstall nowait skipifsilent
 
+[Registry]
+; Not created here (ValueType none): the app's "Start with Windows" switch writes it. Uninstall removes it.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "TradeBot"; ValueType: none; Flags: uninsdeletevalue
+
 [UninstallDelete]
 ; .env holds the Anthropic key and Telegram token: do not leave them behind. journal.db (trade history) stays.
 Type: files; Name: "{app}\.env"

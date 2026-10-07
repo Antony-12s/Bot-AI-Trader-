@@ -288,6 +288,10 @@ const FIELDS = [
     ["FILLING", "choice", ["IOC", "FOK", "RETURN"], "Change it if orders fail with Unsupported filling mode"],
     ["MAGIC", "number", null, "Tags this bot's orders so it only counts its own"],
   ]],
+  ["App", "Start with Windows, start the bot", [
+    ["RUN_AT_LOGIN", "login", null, "TradeBot opens in the tray when you log in to Windows. Saved right away."],
+    ["AUTO_START_BOT", "choice", ["off", "on"], "on: the bot starts as soon as TradeBot opens, and restarts by itself if it stops unexpectedly. With both on, a reboot brings everything back."],
+  ]],
   ["AI & Telegram", "Claude, GPT or Gemini; Telegram bot", [
     ["AI_PROVIDER", "choice", ["claude", "openai", "gemini"], "Which AI makes the calls when BRAIN is ai or hybrid."],
     ["AI_MODEL", "model", null, "Press Test next to the key first: the list then shows every model that key can use."],
@@ -418,6 +422,8 @@ function buildForm(settings) {
           <div class="field"><label for="${key}">${key}</label>
           ${kind === "choice"
             ? `<input type="hidden" id="${key}" name="${key}"><div class="choices" data-for="${key}">${options.map((o) => `<button type="button" data-value="${o}">${o}</button>`).join("")}</div>`
+            : kind === "login"
+            ? `<div><button type="button" class="switch" id="runlogin" title="Start with Windows"></button></div>`
             : kind === "model"
             ? `<select id="${key}" name="${key}"><option value="">Default</option>${settings[key] ? `<option>${esc(settings[key])}</option>` : ""}</select>`
             : kind === "aikey"
@@ -427,7 +433,8 @@ function buildForm(settings) {
                 ${kind === "password" ? `placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"` : ""}>`}
           <small id="hint-${key}">${hint}</small></div>`).join("")}</div></div>`).join("")}</div>
     </div>`;
-  for (const [, , fields] of FIELDS) for (const [key, kind] of fields) if (kind !== "password" && kind !== "aikey") choose(key, settings[key]);
+  for (const [, , fields] of FIELDS) for (const [key, kind] of fields) if (!["password", "aikey", "login"].includes(kind)) choose(key, settings[key]);
+  api("/api/app").then((app) => $("runlogin").classList.toggle("on", app.run_at_login)).catch(() => {});
 }
 
 // Test a key: list the models it can use, then let the user pick one from the drop-down.
@@ -455,8 +462,15 @@ function choose(key, value) {
   if (choices) for (const button of choices.children) button.classList.toggle("on", button.dataset.value === value);
 }
 
-$("form").addEventListener("click", (event) => {
+$("form").addEventListener("click", async (event) => {
   if (event.target.dataset.test) return testKey(event.target.dataset.test, event.target);
+  if (event.target.id === "runlogin") {  // saved straight to Windows, not to .env
+    try {
+      const app = await api("/api/app/login", { on: !event.target.classList.contains("on") });
+      event.target.classList.toggle("on", app.run_at_login);
+    } catch (error) { alert(error.message); }
+    return;
+  }
   const option = event.target.closest(".choices button");
   if (option && option.parentElement.dataset.for === "AI_PROVIDER" && option.dataset.value !== $("AI_PROVIDER").value) {
     // another company's model names do not apply: back to its default until its key is tested

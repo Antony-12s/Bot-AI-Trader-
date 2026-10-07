@@ -237,10 +237,25 @@ class WindowTest(unittest.TestCase):
             self.assertFalse(ui.open_window("http://127.0.0.1:1"))
 
     def test_window_is_pinned_to_webview2(self):
-        fake = SimpleNamespace(create_window=mock.Mock(), start=mock.Mock())
-        with mock.patch.dict("sys.modules", webview=fake), mock.patch.object(ui.sys, "platform", "linux"):
+        fake = SimpleNamespace(create_window=mock.MagicMock(), start=mock.Mock())
+        with mock.patch.dict("sys.modules", webview=fake), mock.patch.object(ui.sys, "platform", "linux"), \
+                mock.patch("desktop.tray") as tray:
             self.assertTrue(ui.open_window("http://127.0.0.1:1"))
         self.assertEqual(fake.start.call_args.kwargs["gui"], "edgechromium")
+        tray.return_value.stop.assert_called_once()  # quitting the window takes the tray icon with it
+
+    def test_closing_the_window_hides_it_to_the_tray(self):
+        window = mock.MagicMock()
+        handlers = []
+        window.events.closing.__iadd__ = lambda self, handler: handlers.append(handler) or self
+        fake = SimpleNamespace(create_window=mock.Mock(return_value=window), start=mock.Mock())
+        with mock.patch.dict("sys.modules", webview=fake), mock.patch.object(ui.sys, "platform", "linux"), \
+                mock.patch("desktop.tray"):
+            ui.open_window("http://127.0.0.1:1", background=True)
+        self.assertFalse(handlers[0]())  # the X click is cancelled...
+        window.hide.assert_called_once()  # ...and the window goes to the tray
+        self.assertTrue(fake.create_window.call_args.kwargs["hidden"])  # started with Windows: no window
+        self.assertIsNone(fake.start.call_args.args[0])
 
 
 class TrustTest(unittest.TestCase):
@@ -261,6 +276,12 @@ class TrustTest(unittest.TestCase):
 
 
 class ServerTest(unittest.TestCase):
+    def test_a_second_app_cannot_take_the_same_port(self):
+        first = ui.Server(("127.0.0.1", 0), ui.Handler)
+        self.addCleanup(first.server_close)
+        with self.assertRaises(OSError):
+            ui.Server(("127.0.0.1", first.server_address[1]), ui.Handler)
+
     def test_bad_input_gets_a_message_not_a_dropped_connection(self):
         import urllib.error
         import urllib.request
