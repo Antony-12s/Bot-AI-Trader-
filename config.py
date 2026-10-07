@@ -17,8 +17,11 @@ DEFAULTS = {
     "MODE": "demo",  # the app offers demo and live; dry (paper) stays for the console tools and replay
     "BRAIN": "rules",
     "STRATEGY": "trend_pullback",
-    "AI_PROVIDER": "claude",
-    "AI_MODEL": "",
+    "AI_PROVIDER": "claude",  # one, or an order to fall back through: claude,openai,gemini
+    "AI_MODEL": "",  # older single setting: the first provider's model when its own below is empty
+    "AI_MODEL_CLAUDE": "",
+    "AI_MODEL_OPENAI": "",
+    "AI_MODEL_GEMINI": "",
     "ANTHROPIC_API_KEY": "",
     "OPENAI_API_KEY": "",
     "GEMINI_API_KEY": "",
@@ -95,8 +98,9 @@ def load_config(env_path=ENV_PATH):
         raise SystemExit(f"MODE must be dry, demo or live, got {config['MODE']!r}")
     if config["BRAIN"] not in ("rules", "ai", "hybrid"):
         raise SystemExit(f"BRAIN must be rules, ai or hybrid, got {config['BRAIN']!r}")
-    if config["AI_PROVIDER"] not in ("claude", "openai", "gemini"):
-        raise SystemExit(f"AI_PROVIDER must be claude, openai or gemini, got {config['AI_PROVIDER']!r}")
+    order = [name.strip() for name in config["AI_PROVIDER"].split(",") if name.strip()]
+    if not order or len(set(order)) != len(order) or any(name not in ("claude", "openai", "gemini") for name in order):
+        raise SystemExit(f"AI_PROVIDER must be claude, openai or gemini, or an order like claude,openai: got {config['AI_PROVIDER']!r}")
     from strategies import STRATEGIES, selected  # here to keep strategies.py free to import config
     unknown = [name for name in selected(config) if name not in STRATEGIES]
     if unknown or not selected(config):

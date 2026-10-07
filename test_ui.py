@@ -238,6 +238,37 @@ class ChartTest(unittest.TestCase):
         self.assertIn("Apache License", ui.VENDOR.joinpath("lightweight-charts.LICENSE").read_text(encoding="utf-8"))
 
 
+class TelegramTestTest(unittest.TestCase):
+    def test_checks_token_and_chat_without_sending_anything(self):
+        import io
+        urls = []
+
+        def opener(url, timeout):
+            urls.append(url)
+            result = {"username": "my_trade_bot"} if "/getMe" in url else {"first_name": "Wasakorn"}
+            return io.BytesIO(json.dumps({"ok": True, "result": result}).encode())
+
+        with tempfile.TemporaryDirectory() as folder:
+            env = Path(folder, ".env")
+            env.write_text("TELEGRAM_TOKEN=123:stored\nTELEGRAM_CHAT_ID=42\n", encoding="utf-8")
+            result = ui.test_telegram({}, env, opener)
+        self.assertEqual(result, {"bot": "@my_trade_bot", "chat": "Wasakorn"})
+        self.assertTrue(all("/sendMessage" not in url for url in urls))
+        self.assertIn("bot123:stored/getChat?chat_id=42", urls[1])
+
+    def test_explains_a_bad_token_without_echoing_it(self):
+        import urllib.error
+
+        def rejected(url, timeout):
+            raise urllib.error.HTTPError(url, 401, "Unauthorized", {}, None)
+
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ValueError) as caught:
+                ui.test_telegram({"token": "999:secret"}, Path(folder, ".env"), rejected)
+        self.assertIn("rejected", str(caught.exception))
+        self.assertNotIn("999:secret", str(caught.exception))
+
+
 class AiKeyTest(unittest.TestCase):
     def test_blank_key_on_the_page_tests_the_stored_one(self):
         with tempfile.TemporaryDirectory() as folder:

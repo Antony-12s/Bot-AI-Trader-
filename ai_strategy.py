@@ -165,17 +165,35 @@ def ask(system, text, schema, config, effort):
 
     Every problem string starts with "AI error" so callers can tell a failed call from a hold.
     """
-    provider = config.get("AI_PROVIDER", "claude")
-    if provider == "openai":
-        return _ask_http(_openai_request, _openai_reply, system, text, schema, config)
-    if provider == "gemini":
-        return _ask_http(_gemini_request, _gemini_reply, system, text, schema, config)
-    return _ask_claude(system, text, schema, config, effort)
+    spent, problem = 0.0, "AI error: no AI provider set"
+    for provider in providers(config):  # in order: the next one only when this one fails
+        if provider == "openai":
+            answer, problem, cost = _ask_http(_openai_request, _openai_reply, system, text, schema, config, "openai")
+        elif provider == "gemini":
+            answer, problem, cost = _ask_http(_gemini_request, _gemini_reply, system, text, schema, config, "gemini")
+        else:
+            answer, problem, cost = _ask_claude(system, text, schema, config, effort)
+        spent += cost
+        if answer is not None:
+            return answer, None, spent
+    return None, problem, spent
+
+
+def providers(config):
+    """AI_PROVIDER as an ordered list ("claude,openai" falls back to GPT when Claude fails)."""
+    return [name.strip() for name in config.get("AI_PROVIDER", "claude").split(",") if name.strip()]
+
+
+def model_for(config, provider):
+    """The provider's own model setting, the older AI_MODEL for the first provider, else the default."""
+    own = config.get("AI_MODEL_" + provider.upper(), "")
+    legacy = config.get("AI_MODEL", "") if providers(config)[:1] == [provider] else ""
+    return own or legacy or DEFAULT_MODELS[provider]
 
 
 def _openai_request(system, text, schema, config):
     body = {
-        "model": config.get("AI_MODEL") or OPENAI_MODEL,
+        "model": model_for(config, "openai"),
         "instructions": system,
         "input": text,
         "max_output_tokens": 16000,
@@ -208,7 +226,7 @@ def _gemini_schema(schema):
 
 
 def _gemini_request(system, text, schema, config):
-    model = config.get("AI_MODEL") or GEMINI_MODEL
+    model = model_for(config, "gemini")
     body = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": text}]}],
@@ -233,12 +251,12 @@ def _gemini_reply(reply):
     return text, None, cost
 
 
-def _ask_http(build, read, system, text, schema, config, opener=None):
+def _ask_http(build, read, system, text, schema, config, provider, opener=None):
     """GPT and Gemini over plain HTTPS (no SDK to install): same contract as _ask_claude."""
     url, headers, body = build(system, text, schema, config)
     request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                      headers=dict(headers, **{"Content-Type": "application/json"}))
-    key_name = KEYS[config.get("AI_PROVIDER", "claude")]
+    key_name = KEYS[provider]
     try:
         with (opener or urllib.request.urlopen)(request, timeout=120) as response:  # ponytail: blocking, like Claude's
             reply = json.loads(response.read())
@@ -307,7 +325,7 @@ def _ask_claude(system, text, schema, config, effort):
         # ponytail: blocking call, the bot ignores Telegram while Claude thinks;
         # move it to a thread if that ever hurts
         response = client.beta.messages.create(
-            model=MODEL,
+            model=model_for(config, "claude"),
             max_tokens=16000,
             # if a safety classifier declines the request, Anthropic re-runs it on a fallback model
             betas=["server-side-fallback-2026-07-01"],

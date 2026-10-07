@@ -96,6 +96,14 @@ code { background: var(--bg); padding: 1px 6px; border-radius: 6px; color: var(-
 .slot { background: var(--panel2); border: 1px solid transparent; border-radius: 12px; padding: 10px 12px; }
 .slot.on { border-color: var(--accent); }
 .slot b { display: block; margin-top: 6px; }
+.airows { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.airow { display: grid; grid-template-columns: 110px 1fr; gap: 6px 14px; align-items: center; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.airow small { grid-column: 2; color: var(--muted); font-size: 12px; }
+.airow .line, .airow .order { display: flex; gap: 8px; align-items: center; }
+.airow .line input { flex: 1; min-width: 0; }
+.airow .line select { flex: 0 0 230px; }
+.airow .order select { flex: 1; }
+.airow span { color: var(--muted); }
 .ownbox { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--panel2); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
 .balance { text-align: right; line-height: 1.1; }
 .balance b { font-size: 20px; }
@@ -307,16 +315,38 @@ const FIELDS = [
     ["RUN_AT_LOGIN", "login", null, "To change it, run TradeBot-Setup.exe again and tick or untick \"Start TradeBot when Windows starts\". The installer sets it, not the app: Windows security treats a program that adds itself to startup as suspicious."],
     ["AUTO_START_BOT", "choice", ["off", "on"], "on: the bot starts as soon as TradeBot opens, and restarts by itself if it stops unexpectedly. With start-with-Windows too, a reboot brings everything back."],
   ]],
-  ["AI & Telegram", "Claude, GPT or Gemini; Telegram bot", [
-    ["AI_PROVIDER", "choice", ["claude", "openai", "gemini"], "Which AI makes the calls when BRAIN is ai or hybrid."],
-    ["AI_MODEL", "model", null, "Press Test next to the key first: the list then shows every model that key can use."],
-    ["ANTHROPIC_API_KEY", "aikey", "claude", "Claude key, from platform.claude.com. Leave blank to keep the stored one."],
-    ["OPENAI_API_KEY", "aikey", "openai", "GPT key, from platform.openai.com. Leave blank to keep the stored one."],
-    ["GEMINI_API_KEY", "aikey", "gemini", "Gemini key, from aistudio.google.com. Leave blank to keep the stored one."],
-    ["TELEGRAM_TOKEN", "password", null, "From @BotFather. Leave blank to keep the stored one"],
-    ["TELEGRAM_CHAT_ID", "text", null, "Your chat id"],
-  ]],
+  ["AI & Telegram", "Claude, GPT or Gemini; Telegram bot", [["AI_ROWS", "airows", null, ""]]],  // laid out by aiRows()
 ];
+// [provider, label, key setting, model setting, where to get a key]
+const AI = [["claude", "Claude", "ANTHROPIC_API_KEY", "AI_MODEL_CLAUDE", "platform.claude.com"],
+            ["openai", "GPT", "OPENAI_API_KEY", "AI_MODEL_OPENAI", "platform.openai.com"],
+            ["gemini", "Gemini", "GEMINI_API_KEY", "AI_MODEL_GEMINI", "aistudio.google.com"]];
+
+// One row per thing: the order the AIs are tried in, then key → Test → model for each, then Telegram.
+function aiRows(settings) {
+  const order = settings.AI_PROVIDER.split(",").map((p) => p.trim()).filter(Boolean);
+  const pick = (i) => `<select class="ord" data-i="${i}">${i ? `<option value="">none</option>` : ""}
+    ${AI.map(([id, label]) => `<option value="${id}" ${order[i] === id ? "selected" : ""}>${label}</option>`).join("")}</select>`;
+  const secret = (key) => `placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"`;
+  return `<div class="airows">
+    <div class="airow"><b>AI order</b><div class="order">${pick(0)}<span>›</span>${pick(1)}<span>›</span>${pick(2)}</div>
+      <input type="hidden" id="AI_PROVIDER" name="AI_PROVIDER" value="${esc(order.join(","))}">
+      <input type="hidden" name="AI_MODEL" value=""><!-- the old single model setting: each row's own model replaces it -->
+      <small>The 1st answers every call. Only if it fails (down, key rejected) does the 2nd try, then the 3rd. Used when BRAIN is ai or hybrid.</small></div>
+    ${AI.map(([id, label, key, model, site]) => `
+    <div class="airow"><b>${label}</b>
+      <div class="line"><input id="${key}" name="${key}" type="password" autocomplete="off" ${secret(key)}>
+        <button type="button" class="ghost" data-test="${id}">Test</button><span>›</span>
+        <select id="${model}" name="${model}"><option value="">Default</option>${settings[model] ? `<option selected>${esc(settings[model])}</option>` : ""}</select></div>
+      <small id="hint-${key}">Key from ${site}. Test it to list its models, then pick one.</small></div>`).join("")}
+    <div class="airow"><b>Telegram</b>
+      <div class="line"><input id="TELEGRAM_TOKEN" name="TELEGRAM_TOKEN" type="password" autocomplete="off" ${secret("TELEGRAM_TOKEN")}>
+        <input id="TELEGRAM_CHAT_ID" name="TELEGRAM_CHAT_ID" autocomplete="off" placeholder="chat id" value="${esc(settings.TELEGRAM_CHAT_ID)}">
+        <button type="button" class="ghost" data-tgtest="1">Test</button></div>
+      <small id="hint-TELEGRAM_TOKEN">Token from @BotFather, then your chat id. Test checks both without sending anything.</small></div>
+    <div><button class="save" type="submit">Save</button></div>
+  </div>`;
+}
 let section = 0;
 const $ = (id) => document.getElementById(id);
 $("mark").src = document.querySelector("link[rel=icon]").href;  // one copy of the logo
@@ -433,7 +463,7 @@ function buildForm(settings) {
     <div class="settings">
       <div class="subnav">${FIELDS.map(([name, sub], i) => `<a data-section="${i}" class="${i === section ? "on" : ""}"><b>${name}</b><span>${sub}</span></a>`).join("")}</div>
       <div>${FIELDS.map(([name, , fields], i) => `
-        <div class="card" data-panel="${i}" ${i === section ? "" : "hidden"}><b>${name}</b><div class="fields">${fields.map(([key, kind, options, hint]) => `
+        <div class="card" data-panel="${i}" ${i === section ? "" : "hidden"}><b>${name}</b>${fields[0][1] === "airows" ? aiRows(settings) : `<div class="fields">${fields.map(([key, kind, options, hint]) => `
           <div class="field"><label for="${key}">${key}</label>
           ${kind === "choice"
             ? `<input type="hidden" id="${key}" name="${key}"><div class="choices" data-for="${key}">${options.map((o) => `<button type="button" data-value="${o}">${o}</button>`).join("")}</div>`
@@ -446,9 +476,9 @@ function buildForm(settings) {
                 placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"><button type="button" class="ghost" data-test="${options}">Test</button></div>`
             : `<input id="${key}" name="${key}" type="${kind}" ${kind === "number" ? 'step="any"' : ""} autocomplete="off"
                 ${kind === "password" ? `placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"` : ""}>`}
-          <small id="hint-${key}">${hint}</small></div>`).join("")}</div></div>`).join("")}</div>
+          <small id="hint-${key}">${hint}</small></div>`).join("")}</div>`}</div>`).join("")}</div>
     </div>`;
-  for (const [, , fields] of FIELDS) for (const [key, kind] of fields) if (!["password", "aikey", "login"].includes(kind)) choose(key, settings[key]);
+  for (const [, , fields] of FIELDS) for (const [key, kind] of fields) if (!["password", "aikey", "login", "airows"].includes(kind)) choose(key, settings[key]);
   api("/api/app").then((app) => {
     $("runlogin").textContent = app.run_at_login ? "On: opens in the tray at login" : "Off";
     $("runlogin").className = "big " + (app.run_at_login ? "win" : "");
@@ -457,17 +487,28 @@ function buildForm(settings) {
 
 // Test a key: list the models it can use, then let the user pick one from the drop-down.
 async function testKey(provider, button) {
-  const keyField = FIELDS.flatMap(([, , f]) => f).find(([, kind, opt]) => kind === "aikey" && opt === provider)[0];
+  const [, , keyField, modelField] = AI.find(([id]) => id === provider);
   const hint = $("hint-" + keyField);
   button.disabled = true; button.textContent = "Testing…";
   try {
     const result = await api("/api/ai/test", { provider, key: $(keyField).value });
-    hint.innerHTML = `<span class="win">✓ Key works.</span> ${result.models.length} models available: pick one in AI_MODEL, then Save settings.`;
-    choose("AI_PROVIDER", provider);
-    const keep = $("AI_MODEL").value;
-    $("AI_MODEL").innerHTML = `<option value="">Default (${esc(result.default)})</option>` +
+    hint.innerHTML = `<span class="win">✓ Key works.</span> ${result.models.length} models: pick one, then Save. The spend estimate knows prices for the default only.`;
+    const keep = $(modelField).value;
+    $(modelField).innerHTML = `<option value="">Default (${esc(result.default)})</option>` +
       result.models.map((m) => `<option ${m === keep ? "selected" : ""}>${esc(m)}</option>`).join("");
-    $("hint-AI_MODEL").textContent = `Models for ${provider}. Prices for the spend estimate are only known for the default.`;
+  } catch (error) {
+    hint.innerHTML = `<span class="loss">✗ ${esc(error.message)}</span>`;
+  }
+  button.disabled = false; button.textContent = "Test";
+}
+
+async function testTelegram(button) {
+  const hint = $("hint-TELEGRAM_TOKEN");
+  button.disabled = true; button.textContent = "Testing…";
+  try {
+    const result = await api("/api/telegram/test", { token: $("TELEGRAM_TOKEN").value, chat_id: $("TELEGRAM_CHAT_ID").value });
+    hint.innerHTML = `<span class="win">✓ Bot ${esc(result.bot)} works${result.chat ? `, and it can reach ${esc(result.chat)}` : ""}.</span>`
+      + (result.chat ? " Save to keep it." : " Add your chat id and test again.");
   } catch (error) {
     hint.innerHTML = `<span class="loss">✗ ${esc(error.message)}</span>`;
   }
@@ -480,14 +521,17 @@ function choose(key, value) {
   if (choices) for (const button of choices.children) button.classList.toggle("on", button.dataset.value === value);
 }
 
+$("form").addEventListener("change", (event) => {
+  if (!event.target.classList.contains("ord")) return;
+  // 1st > 2nd > 3rd into AI_PROVIDER, skipping "none" and repeats
+  const picked = [...document.querySelectorAll(".ord")].map((s) => s.value).filter(Boolean);
+  $("AI_PROVIDER").value = [...new Set(picked)].join(",");
+});
+
 $("form").addEventListener("click", async (event) => {
   if (event.target.dataset.test) return testKey(event.target.dataset.test, event.target);
+  if (event.target.dataset.tgtest) return testTelegram(event.target);
   const option = event.target.closest(".choices button");
-  if (option && option.parentElement.dataset.for === "AI_PROVIDER" && option.dataset.value !== $("AI_PROVIDER").value) {
-    // another company's model names do not apply: back to its default until its key is tested
-    $("AI_MODEL").innerHTML = `<option value="">Default</option>`;
-    $("hint-AI_MODEL").textContent = "Press Test next to this company's key to list its models.";
-  }
   if (option) return choose(option.parentElement.dataset.for, option.dataset.value);
   const link = event.target.closest(".subnav a");
   if (!link) return;

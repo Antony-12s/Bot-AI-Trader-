@@ -10,6 +10,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -234,6 +236,35 @@ def test_ai_key(body, path=ENV_PATH):
     return {"models": ai_strategy.list_models(provider, key), "default": ai_strategy.DEFAULT_MODELS[provider]}
 
 
+def test_telegram(body, path=ENV_PATH, opener=urllib.request.urlopen):
+    """Check the bot token (getMe) and that the bot can see the chat (getChat). Sends no message."""
+    stored = read_env(path)
+    token = str(body.get("token") or "").strip() or stored["TELEGRAM_TOKEN"]
+    chat = str(body.get("chat_id") or "").strip() or stored["TELEGRAM_CHAT_ID"]
+    if not token:
+        raise ValueError("paste the token from @BotFather first")
+
+    def call(method, **params):
+        url = f"https://api.telegram.org/bot{token}/{method}?" + urllib.parse.urlencode(params)
+        try:
+            with opener(url, timeout=15) as response:
+                return json.loads(response.read())["result"]
+        except urllib.error.HTTPError as error:  # its text carries the status only, never the token in the URL
+            raise ValueError({401: "the token was rejected: copy it again from @BotFather",
+                              400: "the bot cannot see that chat: message your bot once, then use your own chat id",
+                              403: "the bot cannot see that chat: message your bot once, then use your own chat id"}
+                             .get(error.code, f"Telegram answered with error {error.code}")) from None
+        except OSError as error:
+            raise ValueError(f"could not reach Telegram ({type(error).__name__})") from None
+
+    me = call("getMe")
+    result = {"bot": "@" + me.get("username", "")}
+    if chat:
+        seen = call("getChat", chat_id=chat)
+        result["chat"] = seen.get("title") or " ".join(filter(None, (seen.get("first_name"), seen.get("last_name"))))
+    return result
+
+
 def broker_login(body, path=ENV_PATH):
     """Log MT5 into the account from the form. Refused while a bot trades: it would switch under it."""
     if bot_running():
@@ -414,6 +445,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/signals/ping": lambda: (ping_webhook(), {"sent": True})[1],
             "/api/broker/login": lambda: broker_login(body),  # the password is not stored or logged
             "/api/ai/test": lambda: test_ai_key(body),  # the key is only sent to its own AI company
+            "/api/telegram/test": lambda: test_telegram(body),
             "/api/app/show": lambda: (show_window and show_window(), {"shown": bool(show_window)})[1],
             "/api/broker/install": lambda: (__import__("broker").start_install(), {"started": True})[1],
             "/api/broker/mode": lambda: switch_mode(body.get("mode")),

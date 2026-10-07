@@ -131,6 +131,51 @@ class ProviderTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "could not reach"):
             ai_strategy.list_models("claude", "k", FakeHttp(error=OSError("offline")))
 
+    def test_falls_back_to_the_next_provider_only_when_one_fails(self):
+        import urllib.error
+
+        class Sequence:
+            def __init__(self, *steps):
+                self.steps, self.urls = list(steps), []
+
+            def __call__(self, request, timeout):
+                self.urls.append(request.full_url)
+                return FakeHttp(**self.steps.pop(0))(request, timeout)
+
+        down = {"error": urllib.error.HTTPError("u", 503, "busy", {}, None)}
+        http = Sequence(down, {"reply": GEMINI_OK})
+        decision = self.decide("openai,gemini", http)
+        self.assertEqual(decision.signal, "sell")  # GPT was down, Gemini answered
+        self.assertTrue(http.urls[0].startswith("https://api.openai.com"))
+        self.assertIn("generativelanguage", http.urls[1])
+        http = Sequence({"reply": OPENAI_OK})
+        self.assertEqual(self.decide("openai,gemini", http).signal, "buy")
+        self.assertEqual(len(http.urls), 1)  # an answer (even hold) never asks the next one
+        failed = self.decide("openai,gemini", Sequence(down, down))
+        self.assertIsNone(failed.signal)
+        self.assertIn("API status 503", failed.reason)
+
+    def test_each_provider_has_its_own_model(self):
+        config = {"AI_PROVIDER": "gemini,openai", "AI_MODEL": "gemini-old", "AI_MODEL_OPENAI": "gpt-5-mini"}
+        self.assertEqual(ai_strategy.model_for(config, "openai"), "gpt-5-mini")
+        self.assertEqual(ai_strategy.model_for(config, "gemini"), "gemini-old")  # the older single setting, first provider only
+        self.assertEqual(ai_strategy.model_for(config, "claude"), ai_strategy.MODEL)
+        self.assertEqual(ai_strategy.model_for(dict(config, AI_MODEL_GEMINI="gemini-3.5-flash"), "gemini"), "gemini-3.5-flash")
+
+    def test_provider_order_is_validated(self):
+        import tempfile
+        from pathlib import Path
+        import config as settings
+        with tempfile.TemporaryDirectory() as folder:
+            env = Path(folder, ".env")
+            for good in ("claude", "gemini,claude", "openai, gemini, claude"):
+                env.write_text(f"AI_PROVIDER={good}\n", encoding="utf-8")
+                settings.load_config(env)
+            for bad in ("claude,claude", "claude,grok", ","):
+                env.write_text(f"AI_PROVIDER={bad}\n", encoding="utf-8")
+                with self.assertRaises(SystemExit, msg=bad):
+                    settings.load_config(env)
+
     def test_unknown_provider_is_refused_at_startup(self):
         import tempfile
         from pathlib import Path
