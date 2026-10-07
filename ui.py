@@ -329,6 +329,22 @@ def switch_mode(mode, path=ENV_PATH):
     return public_settings(path)
 
 
+def follow_account(live_ok=False, path=ENV_PATH):
+    """Demo / Live follows the account MetaTrader 5 is logged in to, and files it in that mode's slot.
+    Demo is followed at once; a real account only with live_ok (the user said yes), else {"ask": login}.
+    Until then MODE stays demo and the bot refuses the real account (risk.account_error)."""
+    account = mt5_call("status")
+    if not account.get("logged_in"):
+        return {}
+    kind = "demo" if account["demo"] else "live"
+    if read_env(path)["MODE"] == kind:
+        return {}
+    if kind == "live" and not live_ok:
+        return {"ask": account["login"], "server": account["server"]}
+    save_settings({"MODE": kind, f"{kind.upper()}_LOGIN": str(account["login"]), f"{kind.upper()}_SERVER": account["server"]}, path)
+    return {"settings": public_settings(path)}
+
+
 def open_terminal():
     """Bring MT5 forward. Windows only lets the program the user just clicked raise another window, so this
     one lets any process do it for the moment, then the helper process (which talks to MT5) does it."""
@@ -506,6 +522,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/broker/mode": lambda: switch_mode(body.get("mode")),
             "/api/broker/own": lambda: (mt5_call("setup_own_terminal"), {"started": True})[1],
             "/api/broker/open": lambda: {"result": open_terminal()},
+            "/api/broker/follow": lambda: follow_account(body.get("live") is True),
             "/api/broker/show": lambda: {"windows": mt5_call("show_terminal", bool(body.get("show")))},
         }
         action = actions.get(urlparse(self.path).path)

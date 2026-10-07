@@ -768,9 +768,27 @@ $("mt5btn").addEventListener("click", async () => {
   setTimeout(() => loadBroker().catch(() => showLink(null)), 1500);
 });
 
+// Demo / Live follows the account MT5 is logged in to. A real-money account is asked about once per login,
+// and only while the window is on screen; on "no" the bot stays in Demo and refuses that account.
+const askedLive = new Set();
+async function followAccount(state) {
+  let live = false;
+  if (!state.demo) {
+    if (askedLive.has(state.login) || document.visibilityState !== "visible") return;
+    askedLive.add(state.login);
+    live = confirm(`MetaTrader 5 is logged in to a REAL MONEY account: ${state.login} on ${state.server}.\n\nSwitch TradeBot to Live and let the bot trade it?`);
+    if (!live) return;
+  }
+  try {
+    const result = await api("/api/broker/follow", { live });
+    if (result.settings) { showMode(result.settings); buildForm(result.settings); }
+  } catch (error) { alert(error.message); }
+}
+
 async function loadBroker() {
   try { account = await api("/api/broker"); } catch (error) { showLink(null); throw error; }
   showLink(account);
+  if (account.logged_in && mode && (account.demo ? "demo" : "live") !== mode) followAccount(account);
   const kind = account.logged_in ? (account.demo ? "demo" : "real") : "";
   $("balance").className = "balance " + kind;
   $("balance").innerHTML = account.logged_in ? `<b>${account.balance.toFixed(2)} ${esc(account.currency)}</b><span>${account.demo ? "DEMO" : "REAL MONEY"}</span>` : "";

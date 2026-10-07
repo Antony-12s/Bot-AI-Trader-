@@ -173,19 +173,24 @@ class BrokerTest(unittest.TestCase):
         exe.write_bytes(b"")
         self.patched(terminal_info=SimpleNamespace(connected=True, path=folder))
         user32 = mock.MagicMock()
-        with mock.patch.object(broker, "own_terminal", return_value=None),                 mock.patch("ctypes.windll", SimpleNamespace(user32=user32), create=True),                 mock.patch.object(broker.subprocess, "Popen") as popen:
+        with mock.patch.object(broker, "own_terminal", return_value=None), \
+                mock.patch("ctypes.windll", SimpleNamespace(user32=user32), create=True), \
+                mock.patch.object(broker.subprocess, "Popen") as popen:
             self.assertEqual(broker.terminal_in_use(), exe)  # the attached terminal
             with mock.patch.object(broker, "_terminal_windows", return_value=[]):
                 self.assertEqual(broker.open_terminal(), "started")
             popen.assert_called_once_with([str(exe)], cwd=folder)
-            with mock.patch.object(broker, "_terminal_windows", return_value=[7, 8]),                     mock.patch.object(broker, "_class_of", side_effect=["MetaQuotes::MetaTrader::5.00", "GDI+ Window"]):
+            with mock.patch.object(broker, "_terminal_windows", return_value=[7, 8]), \
+                    mock.patch.object(broker, "_class_of", side_effect=["MetaQuotes::MetaTrader::5.00", "GDI+ Window"]):
                 self.assertEqual(broker.open_terminal(), "shown")
             user32.ShowWindow.assert_called_once_with(7, 9)  # the helper window stays hidden
             user32.SetForegroundWindow.assert_called_once_with(7)
 
     def test_open_terminal_without_mt5_says_to_install_it(self):
         self.patched(terminal_info=None)
-        with mock.patch.object(broker, "own_terminal", return_value=None),                 mock.patch.object(broker, "installed_terminals", return_value=[]),                 self.assertRaisesRegex(ValueError, "not installed"):
+        with mock.patch.object(broker, "own_terminal", return_value=None), \
+                mock.patch.object(broker, "installed_terminals", return_value=[]), \
+                self.assertRaisesRegex(ValueError, "not installed"):
             broker.open_terminal()
 
     def test_dashboard_files_each_login_under_its_real_type_and_keeps_the_mode(self):
@@ -204,6 +209,27 @@ class BrokerTest(unittest.TestCase):
             self.assertNotIn("pw", env.read_text(encoding="utf-8"))
             with mock.patch.object(ui, "bot_running", return_value=True), self.assertRaisesRegex(ValueError, "Stop the bot"):
                 ui.switch_mode("live", env)
+
+    def test_mode_follows_the_mt5_account_but_real_money_needs_a_yes(self):
+        import tempfile
+        from pathlib import Path
+        demo = {"logged_in": True, "demo": True, "login": 111, "server": "XMGlobal-MT5 Demo"}
+        real = {"logged_in": True, "demo": False, "login": 450272430, "server": "XMGlobal-MT5 20"}
+        with tempfile.TemporaryDirectory() as folder:
+            env = Path(folder, ".env")
+            env.write_text("MODE=demo\n", encoding="utf-8")
+            with mock.patch.object(broker, "status", return_value=real):
+                self.assertEqual(ui.follow_account(False, env), {"ask": 450272430, "server": "XMGlobal-MT5 20"})
+                self.assertEqual(ui.read_env(env)["MODE"], "demo")  # not without the user's yes
+                ui.follow_account(True, env)
+            saved = ui.read_env(env)
+            self.assertEqual((saved["MODE"], saved["LIVE_LOGIN"], saved["LIVE_SERVER"]), ("live", "450272430", "XMGlobal-MT5 20"))
+            with mock.patch.object(broker, "status", return_value=demo):
+                self.assertEqual(ui.follow_account(False, env)["settings"]["MODE"], "demo")  # back to demo needs no yes
+                self.assertEqual(ui.follow_account(False, env), {})  # already matching: nothing to do
+            self.assertEqual(ui.read_env(env)["DEMO_LOGIN"], "111")
+            with mock.patch.object(broker, "status", return_value={"logged_in": False}):
+                self.assertEqual(ui.follow_account(True, env), {})
 
     def test_dashboard_refuses_to_switch_accounts_under_a_running_bot(self):
         mocks = self.patched()
