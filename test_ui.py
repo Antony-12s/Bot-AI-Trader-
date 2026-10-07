@@ -260,10 +260,23 @@ class MyAgentsTest(unittest.TestCase):
         raw = {"name": "A", "template": "ma_cross", "markets": ["GOLD"], "timeframe": "M15", "analyst": "claude"}
         with tempfile.TemporaryDirectory() as folder:
             result = ui.backtest(raw, Path(folder, ".env"), history)
-        history.assert_called_once_with("GOLD", "M15", ui.BACKTEST_CANDLES)
+        history.assert_called_once_with("GOLD", "M15", 30 * 96)  # a month of M15 candles
         (market,) = result["markets"]
         self.assertEqual((market["market"], market["candles"], market["totals"]["trades"]), ("GOLD", len(bars), 1))
         self.assertEqual(result["total"]["trades"], 1)
+        self.assertEqual(sum(half["trades"] for half in market["halves"]), 1)  # every trade lands in one half
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertFalse(ui.backtest(raw, Path(folder, ".env"), history, months=99)["capped"])
+            self.assertEqual(history.call_args.args[2], 12 * 30 * 96)  # 99 months means the most, a year
+            self.assertTrue(ui.backtest(dict(raw, timeframe="M1"), Path(folder, ".env"), history, months=12)["capped"])
+            self.assertEqual(history.call_args.args[2], ui.MAX_BACKTEST_CANDLES)  # a year of M1 is over the cap
+        with tempfile.TemporaryDirectory() as folder:
+            result = ui.compare(raw, Path(folder, ".env"), history, months=1)
+        import strategies
+        self.assertEqual({row["template"] for row in result["rows"]}, set(strategies.PLAIN))
+        nets = [row["totals"]["net"] for row in result["rows"]]
+        self.assertEqual(nets, sorted(nets, reverse=True))  # best first
+        self.assertEqual(history.call_count, 4)  # compare fetched GOLD once for all eleven
         with self.assertRaisesRegex(ValueError, "cannot test this one for free"):
             ui.backtest(dict(raw, template="", strategy="Buy when the moon is full."), Path(folder, ".env"), history)
 

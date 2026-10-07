@@ -252,16 +252,15 @@ def understand(raw):
 
 
 AI_CALL_GUESS = 0.004  # USD per agent AI call before any were made: measured 0.0034 with Claude on 2026-10-07
-BACKTEST_CANDLES = 3000  # per market: about a month of M15. ponytail: raise it if results come out too thin
 
 
-def backtest(raw, path=ENV_PATH, history=lambda *a: mt5_call("history", *a)):
-    """The wizard's "Test on past prices": the agent over each market's recent candles, on paper, free.
+TF_MINUTES = {"M1": 1, "M5": 5, "M15": 15, "M30": 30, "H1": 60, "H4": 240, "D1": 1440}
+MAX_BACKTEST_CANDLES = 50000  # per market; a year of M1 would be 500k, minutes of waiting. ponytail: precompute indicators if more is needed
 
-    Fills, stops, lot and daily limits come from Settings, as in replay.py. An AI agent is tested with
-    the built-in analyst: its own AI would cost one call per candle, so its live calls can differ."""
+
+def _test_setup(raw, path, months):
+    """The agent as the built-in analyst runs it, the config, and how many candles `months` takes."""
     import agents
-    import replay
     try:
         agent = agents.clean(dict(raw, analyst="rules", runs="candle", min_confidence=0))
     except ValueError as error:
@@ -270,25 +269,71 @@ def backtest(raw, path=ENV_PATH, history=lambda *a: mt5_call("history", *a)):
         config = load_config(path)
     except SystemExit as error:
         raise ValueError(str(error)) from None
+    months = max(1, min(int(months or 1), 12))
+    wanted = months * 30 * 1440 // TF_MINUTES[agent["timeframe"]]
+    return agent, config, min(wanted, MAX_BACKTEST_CANDLES), wanted > MAX_BACKTEST_CANDLES
+
+
+def _run_on(agent, bars, digits, contract, config):
+    """The agent's paper trades over these candles (replay.py with the agent's analyst)."""
+    import agents
+    import replay
+    market_config = dict(config, SYMBOL=bars["market"], TIMEFRAME=agent["timeframe"], BRAIN="rules",
+                         CONTRACT_SIZE=contract or config["CONTRACT_SIZE"])
+    journal = Journal()
+    try:
+        replay.replay(bars["bars"], market_config, journal, "test", digits, log=lambda line: None,
+                      decide=lambda window: (lambda signal, _, reason, cost: (signal, reason, cost))(
+                          *agents.decide(agent, window, market_config)))
+        return journal.closed_trades(run="test")
+    finally:
+        journal.close()
+
+
+def _halves(trades, bars):
+    """Totals of the first and the second half of the period: a strategy that only made money in one
+    half more likely fitted luck than found an edge."""
+    middle = (bars[0]["time"] + bars[-1]["time"]) / 2
+    return [summarize([t for t in trades if t["opened_at"] < middle]), summarize([t for t in trades if t["opened_at"] >= middle])]
+
+
+def backtest(raw, path=ENV_PATH, history=lambda *a: mt5_call("history", *a), months=1):
+    """The wizard's "Test on past prices": the agent over each market's last `months`, on paper, free.
+
+    Fills, stops, lot and daily limits come from Settings, as in replay.py. An AI agent is tested with
+    the built-in analyst: its own AI would cost one call per candle, so its live calls can differ."""
+    agent, config, count, capped = _test_setup(raw, path, months)
     results, everything = [], []
     for market in agent["markets"]:
-        bars, digits, contract = history(market, agent["timeframe"], BACKTEST_CANDLES)
-        market_config = dict(config, SYMBOL=market, TIMEFRAME=agent["timeframe"], BRAIN="rules",
-                             CONTRACT_SIZE=contract or config["CONTRACT_SIZE"])
-        journal = Journal()
-        try:
-            replay.replay(bars, market_config, journal, "test", digits, log=lambda line: None,
-                          decide=lambda window: (lambda signal, _, reason, cost: (signal, reason, cost))(
-                              *agents.decide(agent, window, market_config)))
-            trades = journal.closed_trades(run="test")
-        finally:
-            journal.close()
+        bars, digits, contract = history(market, agent["timeframe"], count)
+        trades = _run_on(agent, {"market": market, "bars": bars}, digits, contract, config)
         everything += trades
         limit = config["MAX_SPREAD_POINTS"]  # the bot skips wider spreads, live and here: say so, or 0 trades looks like a bug
         results.append({"market": market, "from": bars[0]["time"], "to": bars[-1]["time"], "candles": len(bars),
-                        "totals": summarize(trades), "spread_limit": limit,
+                        "totals": summarize(trades), "halves": _halves(trades, bars), "spread_limit": limit,
                         "too_wide": round(sum(bar["spread"] > limit for bar in bars) / len(bars), 2) if limit else 0})
-    return {"markets": results, "total": summarize(everything)}
+    return {"markets": results, "total": summarize(everything), "capped": capped}
+
+
+def compare(raw, path=ENV_PATH, history=lambda *a: mt5_call("history", *a), months=1):
+    """Every ready strategy on the agent's markets and timeframe, best total profit first."""
+    import strategies
+    agent, config, count, capped = _test_setup(raw, path, months)
+    data = [(market, *history(market, agent["timeframe"], count)) for market in agent["markets"]]  # fetched once for all
+    rows = []
+    for template, (name, *_) in strategies.PLAIN.items():
+        tried = dict(agent, template=template, strategy=strategies.PLAIN[template][2])
+        trades, halves = [], [[], []]
+        for market, bars, digits, contract in data:
+            mine = _run_on(tried, {"market": market, "bars": bars}, digits, contract, config)
+            middle = (bars[0]["time"] + bars[-1]["time"]) / 2
+            trades += mine
+            halves[0] += [t for t in mine if t["opened_at"] < middle]
+            halves[1] += [t for t in mine if t["opened_at"] >= middle]
+        rows.append({"template": template, "name": name, "totals": summarize(trades), "halves": [summarize(h) for h in halves]})
+    rows.sort(key=lambda row: row["totals"]["net"], reverse=True)
+    return {"rows": rows, "from": min(bars[0]["time"] for _, bars, *_ in data), "to": max(bars[-1]["time"] for _, bars, *_ in data),
+            "candles": count, "capped": capped}
 
 
 def delete_agent(agent_id, path=None):
@@ -542,7 +587,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/myagents/mode": lambda: set_agent_mode(body.get("id"), body.get("mode")),
             "/api/myagents/delete": lambda: (delete_agent(body.get("id")), {"deleted": True})[1],
             "/api/myagents/understand": lambda: understand(body),
-            "/api/myagents/backtest": lambda: backtest(body),
+            "/api/myagents/backtest": lambda: backtest(body, months=body.get("months")),
+            "/api/myagents/compare": lambda: compare(body, months=body.get("months")),
             "/api/app/show": lambda: (show_window and show_window(), {"shown": bool(show_window)})[1],
             "/api/broker/install": lambda: (mt5_call("start_install"), {"started": True})[1],
             "/api/broker/mode": lambda: switch_mode(body.get("mode")),

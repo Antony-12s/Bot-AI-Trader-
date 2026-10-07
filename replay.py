@@ -105,7 +105,7 @@ def replay(candles, config, journal, run, digits, log=print, decide=None):
         )
         position["index"] = index + 1
         position["trade_id"] = journal.open_trade(
-            "replay", run, config["SYMBOL"], position, snapshot=ai_strategy.snapshot(window, config),
+            "replay", run, config["SYMBOL"], position, snapshot=ai_strategy.snapshot(window, config) if decide is None else None,  # the app's quick tests skip it
             brain=config["BRAIN"],
         )
         log(f"{stamp(opening['time'])} {signal} @ {position['entry']} sl {position['sl']} tp {position['tp']} [{reason}]")

@@ -12,6 +12,7 @@ Understood: RSI (above / below / between / crosses), price against a moving aver
 average rising or falling, MACD against its signal line or zero, the histogram, green / red
 candles, engulfing candles, Bollinger bands, and a close beyond the previous candle's high / low.
 """
+import functools
 import re
 
 import indicators
@@ -97,6 +98,7 @@ def read_clause(clause):
     return None
 
 
+@functools.lru_cache(maxsize=256)  # read once per text: a backtest asks for the same rules thousands of times
 def parse(text):
     """{"buy": [conditions], "sell": [conditions], "unknown": {"buy": [...], "sell": [...]}}."""
     rules = {"buy": [], "sell": [], "unknown": {"buy": [], "sell": []}, "need": {"buy": None, "sell": None}}
@@ -177,19 +179,26 @@ def describe(condition):
     }[kind]()
 
 
-def holds(condition, candles):
+def holds(condition, candles, memo=None):
     """Does the condition hold on the last closed candle? Too little history reads as no."""
     kind, *args = condition
     prices = [candle["close"] for candle in candles]
     beyond = lambda op, a, b: a > b if op == ">" else a < b
     crossed = lambda op, before, now: beyond(op, now[1], now[0]) and not beyond(op, before[1], before[0])
 
+    memo = {} if memo is None else memo  # one candle's indicator values, shared by all of its conditions
+
+    def once(key, compute):
+        if key not in memo:
+            memo[key] = compute()
+        return memo[key]
+
     def line(token):
-        return (indicators.ema if token.startswith("ema") else indicators.sma)(prices, int(token[3:]))
+        return once(token, lambda: (indicators.ema if token.startswith("ema") else indicators.sma)(prices, int(token[3:])))
 
     try:
         if kind.startswith("rsi"):
-            rsi = indicators.rsi(prices)
+            rsi = once("rsi", lambda: indicators.rsi(prices))
             if kind == "rsi_between":
                 return args[0] <= rsi[-1] <= args[1]
             if kind == "rsi":
@@ -209,7 +218,7 @@ def holds(condition, candles):
                 return beyond(args[0], prices[-1], values[-1])
             return crossed(args[0], (values[-2], prices[-2]), (values[-1], prices[-1]))
         if kind.startswith(("macd", "histogram")):
-            macd_line, signal, histogram = indicators.macd(prices)
+            macd_line, signal, histogram = once("macd", lambda: indicators.macd(prices))
             if kind == "histogram":
                 return beyond(args[0], histogram[-1], 0)
             if kind == "histogram_slope":
@@ -220,7 +229,7 @@ def holds(condition, candles):
                 return beyond(args[0], macd_line[-1], signal[-1])
             return crossed(args[0], (signal[-2], macd_line[-2]), (signal[-1], macd_line[-1]))
         if kind.startswith("vwap"):
-            average = indicators.vwap(candles)[-1]
+            average = once("vwap", lambda: indicators.vwap(candles)[-1])
             target = average * (1 + args[1] / 100 if args[0] == ">" else 1 - args[1] / 100) if kind == "vwap_gap" else average
             return beyond(args[0], prices[-1], target)
         last, before = candles[-1], candles[-2]
@@ -231,7 +240,7 @@ def holds(condition, candles):
                 return before["close"] < before["open"] < last["close"] and last["open"] <= before["close"] and last["close"] > last["open"]
             return before["close"] > before["open"] > last["close"] and last["open"] >= before["close"] and last["close"] < last["open"]
         if kind == "band":
-            lower, middle, upper = indicators.bollinger(prices[-20:], 20)  # the last band only: a backtest asks thousands of times
+            lower, middle, upper = once("bands", lambda: indicators.bollinger(prices[-20:], 20))  # the last band only
             return beyond(args[0], prices[-1], {"lower": lower, "middle": middle, "upper": upper}[args[1]][-1])
         if kind == "previous":
             return last["close"] > before["high"] if args[0] == ">" else last["close"] < before["low"]
@@ -253,7 +262,8 @@ def decide(text, candles):
     ready = [side for side in ("buy", "sell") if rules[side] and not rules["unknown"][side]]
     if not ready:
         return None, "no rule the built-in analyst can read: rewrite it, or pick an AI analyst"
-    missing = {side: [describe(c) for c in rules[side] if not holds(c, candles)] for side in ready}
+    memo = {}
+    missing = {side: [describe(c) for c in rules[side] if not holds(c, candles, memo)] for side in ready}
     met = [side for side in ready if len(rules[side]) - len(missing[side]) >= (rules["need"][side] or len(rules[side]))]
     if len(met) != 1:
         return None, "both sides' rules hold: hold" if met else "waiting: " + "; ".join(

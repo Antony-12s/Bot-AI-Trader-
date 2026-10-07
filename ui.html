@@ -971,9 +971,21 @@ const stepAnalyst = () => `<div class="field"><label>Analyst</label><select data
   <small>The built-in analyst reads your written rules and checks them on the broker's own candles: RSI, moving averages, MACD, Bollinger bands, candle patterns. It trades only when every rule of one side holds and the other side's does not; anything it cannot read, or anything ambiguous, is a hold. No account, no API key, works offline. An AI reads your text and the market instead; each run costs a call, and the daily AI budget in Settings applies.</small>
   ${draft.analyst === "rules" ? `<div id="understood"></div>` : ""}<div id="costest" class="sub" style="margin-top: 10px"></div></div>
   <div class="field" style="margin-top: 16px"><label>Test on past prices</label>
-    <div class="sub">Runs this agent over about the last ${BACKTEST_BARS} candles of each market, on paper, with your lot, stops and limits from Settings. Free.${draft.analyst === "rules" ? "" : " An AI agent is tested with the built-in analyst reading its text: its AI may decide differently."} Past results do not promise future ones.</div>
-    <button class="ghost" type="button" data-backtest="1" style="margin-top: 8px">Test it</button><div id="btresult"></div></div>`;
-const BACKTEST_BARS = 3000;  // ui.BACKTEST_CANDLES
+    <div class="sub">Runs it over each market's past candles on paper, with your lot, stops and limits from Settings. Free.${draft.analyst === "rules" ? "" : " An AI agent is tested with the built-in analyst reading its text: its AI may decide differently."} The period is split in two halves: a strategy that made money in only one half more likely got lucky. News pauses are not in the test (no past calendar). Past results do not promise future ones.</div>
+    <div class="copy" style="margin-top: 8px"><select id="btmonths">${[[1, "Last month"], [3, "Last 3 months"], [6, "Last 6 months"], [12, "Last year"]].map(([m, label]) =>
+      `<option value="${m}" ${m === btMonths ? "selected" : ""}>${label}</option>`).join("")}</select>
+      <button class="ghost" type="button" data-backtest="1">Test it</button>
+      <button class="ghost" type="button" data-compare="1">Compare all ${Object.keys(PLAIN).length} ready strategies</button></div>
+    <div id="btresult"></div></div>`;
+let btMonths = 1;
+const day = (t) => new Date(t * 1000).toISOString().slice(0, 10);
+const halvesWord = ([first, second]) => !first.trades && !second.trades ? "no trades"
+  : first.net > 0 && second.net > 0 ? `<span class="win">made money in both halves</span>`
+  : first.net > 0 || second.net > 0 ? `<span>only one half made money: may be luck</span>` : `<span class="loss">lost in both halves</span>`;
+const testCells = (t, halves) => `<td>${t.trades}</td><td>${t.trades ? Math.round(t.win_rate * 100) + "%" : "—"}</td>
+  <td class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${money(t.net)}</td>
+  <td>${halves ? `${money(halves[0].net)} / ${money(halves[1].net)}` : ""}</td><td>${t.trades ? "$" + t.max_drawdown.toFixed(2) : "—"}</td>`;
+const TEST_HEAD = `<th>Trades</th><th>Won</th><th>Profit</th><th>1st / 2nd half</th><th>Worst drop</th>`;
 const TF_MINUTES = { M1: 1, M5: 5, M15: 15, M30: 30, H1: 60, H4: 240, D1: 1440 };
 let costInfo = null;
 function costLine() {
@@ -1016,7 +1028,7 @@ $("agentsview").addEventListener("change", (event) => {
   if (field === "runs" || field === "analyst") renderWizard();  // the timer's minutes and the analyst's reading come and go
 });
 $("agentsview").addEventListener("click", async (event) => {
-  const el = event.target.closest("[data-new],[data-agent],[data-setmode],[data-edit],[data-delete],[data-template],[data-goto],[data-cancel],[data-saveagent],[data-market],[data-mode-pick],[data-backtest]");
+  const el = event.target.closest("[data-new],[data-agent],[data-setmode],[data-edit],[data-delete],[data-template],[data-goto],[data-cancel],[data-saveagent],[data-market],[data-mode-pick],[data-backtest],[data-compare],[data-use]");
   if (!el) return;
   const d = el.dataset, card = el.closest("[data-agent]");
   try {
@@ -1043,17 +1055,32 @@ $("agentsview").addEventListener("click", async (event) => {
       return loadMarkets();
     }
     if (d.modePick) { draft.mode = d.modePick; return renderWizard(); }
-    if (d.backtest) {
-      $("btresult").innerHTML = `<div class="sub" style="margin-top: 8px">Testing… a few seconds per market.</div>`;
-      const result = await api("/api/myagents/backtest", draft);
-      const row = (name, t, span) => `<tr><td>${esc(name)}</td><td>${span}</td><td>${t.trades}</td><td>${t.trades ? Math.round(t.win_rate * 100) + "%" : "—"}</td>
-        <td class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${money(t.net)}</td><td>${t.trades ? "$" + t.max_drawdown.toFixed(2) : "—"}</td></tr>`;
-      $("btresult").innerHTML = `<table class="bt"><tr><th>Market</th><th>Period</th><th>Trades</th><th>Won</th><th>Profit</th><th>Worst drop</th></tr>
-        ${result.markets.map((m) => row(m.market, m.totals, `${when(m.from).slice(0, 5)} to ${when(m.to).slice(0, 5)}`)).join("")}
-        ${result.markets.length > 1 ? row("All", result.total, "") : ""}</table>
+    if (d.backtest || d.compare) {
+      btMonths = +$("btmonths").value;
+      // measured on 2026-10-08: a month of M15 (2,880 candles) takes ~1.7 s to test and ~12.5 s to compare, per market
+      const candles = Math.min(btMonths * 30 * 1440 / TF_MINUTES[draft.timeframe], 50000);
+      const seconds = Math.ceil(candles / 2880 * (d.compare ? 12.5 : 1.7) * (draft.markets.length || 1));
+      $("btresult").innerHTML = `<div class="sub" style="margin-top: 8px">Testing… about ${seconds < 90 ? seconds + " seconds" : Math.round(seconds / 60) + " minutes"}.</div>`;
+      const result = await api(d.compare ? "/api/myagents/compare" : "/api/myagents/backtest", { ...draft, months: btMonths });
+      const capped = result.capped ? `<div class="sub" style="margin-top: 6px">Capped at 50,000 candles per market: pick a longer timeframe for a longer period.</div>` : "";
+      if (d.compare) {
+        $("btresult").innerHTML = `<div class="sub" style="margin-top: 8px">${esc(draft.markets.join(", "))} · ${esc(draft.timeframe)} · ${day(result.from)} to ${day(result.to)}, best first</div>
+          <table class="bt"><tr><th>Strategy</th>${TEST_HEAD}<th>Halves</th><th></th></tr>
+          ${result.rows.map((r) => `<tr><td>${esc(r.name)}</td>${testCells(r.totals, r.halves)}<td>${halvesWord(r.halves)}</td>
+            <td><button class="ghost" type="button" data-use="${esc(r.template)}">Use</button></td></tr>`).join("")}</table>${capped}`;
+        return;
+      }
+      $("btresult").innerHTML = `<table class="bt"><tr><th>Market</th><th>Period</th>${TEST_HEAD}<th>Halves</th></tr>
+        ${result.markets.map((m) => `<tr><td>${esc(m.market)}</td><td>${day(m.from)} to ${day(m.to)}</td>${testCells(m.totals, m.halves)}<td>${halvesWord(m.halves)}</td></tr>`).join("")}
+        ${result.markets.length > 1 ? `<tr><td>All</td><td></td>${testCells(result.total)}<td></td></tr>` : ""}</table>
         ${result.markets.filter((m) => m.too_wide >= 0.5).map((m) => `<div class="sub loss" style="margin-top: 6px">${esc(m.market)}: the spread was wider than your limit (${m.spread_limit} points, MAX_SPREAD_POINTS in Settings) on ${Math.round(m.too_wide * 100)}% of candles, so the bot skips it almost always, live too. Raise the limit or drop this market.</div>`).join("")}
-        <div class="sub" style="margin-top: 6px">${result.total.trades < 30 ? "Fewer than 30 trades: too few to judge. Watch it live for a while before trusting it." : "Enough trades for a first look; it is still the past."}</div>`;
+        <div class="sub" style="margin-top: 6px">${result.total.trades < 30 ? "Fewer than 30 trades: too few to judge. Try a longer period, or watch it live for a while before trusting it." : "Enough trades for a first look; it is still the past."}</div>${capped}`;
       return;
+    }
+    if (d.use) {  // a strategy from the comparison: its words replace the agent's, the rest stays
+      [draft.name, , draft.strategy] = PLAIN[d.use];
+      draft.template = d.use;
+      wizStep = 1; return renderWizard();
     }
     if (d.goto !== undefined) { wizStep = +d.goto; return renderWizard(); }
     if (d.cancel) { draft = null; return loadMyAgents(); }

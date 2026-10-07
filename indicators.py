@@ -7,7 +7,6 @@ result[-2] to the candle before. Too little data gives an empty list.
 EMA-based values (ema, rsi, macd) need history to settle: feed them at least
 3-4x their period, or they will not match what the MT5 chart shows.
 """
-import statistics
 
 
 def sma(prices, period):
@@ -63,7 +62,9 @@ def macd(prices, fast=12, slow=26, signal=9):
 def bollinger(prices, period=20, deviations=2.0):
     """Return (lower, middle, upper) bands using population standard deviation."""
     middle = sma(prices, period)
-    widths = [deviations * statistics.pstdev(prices[start:start + period]) for start in range(len(middle))]
+    # population standard deviation in plain floats: statistics.pstdev is exact (Fractions) and ~30x slower
+    widths = [deviations * (sum((p - mean) ** 2 for p in prices[start:start + period]) / period) ** 0.5
+              for start, mean in enumerate(middle)]
     lower = [mean - width for mean, width in zip(middle, widths)]
     upper = [mean + width for mean, width in zip(middle, widths)]
     return lower, middle, upper
