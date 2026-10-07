@@ -11,6 +11,7 @@ from journal import Journal
 from risk import SECONDS_PER_DAY
 
 CONFIG = {
+    "NEWS_BLACKOUT_MINUTES": 0,  # tests never read the news feed
     "MODE": "demo",
     "BRAIN": "rules",
     "STRATEGY": "ma_cross",

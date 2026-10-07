@@ -38,6 +38,7 @@ DEFAULTS = {
     "MAX_DAILY_LOSS": "20",
     "MAX_TRADES_PER_DAY": "0",
     "MAX_SPREAD_POINTS": "50",
+    "NEWS_BLACKOUT_MINUTES": "30",
     "MAGIC": "20261003",
     "FILLING": "IOC",
     "TELEGRAM_TOKEN": "",
@@ -64,6 +65,7 @@ NUMBER_TYPES = {
     "MAX_DAILY_LOSS": float,
     "MAX_TRADES_PER_DAY": int,
     "MAX_SPREAD_POINTS": int,
+    "NEWS_BLACKOUT_MINUTES": int,
     "MAGIC": int,
 }
 # Candle length of every MT5 timeframe name, in seconds.

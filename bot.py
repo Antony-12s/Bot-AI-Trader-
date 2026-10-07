@@ -27,6 +27,7 @@ import ai_strategy
 import brain
 import fills
 import indicators
+import news
 import signals
 from config import ALIVE, ENV_PATH, JOURNAL_PATH, STOP_FLAG, candle_seconds, terminal_args
 from config import load_config as load_settings
@@ -352,7 +353,14 @@ def current_block(config, state, tick, symbol_info):
     pnl = pnl_today(tick.time) + (journal.profit_since(start, "paper") if paper else 0.0)
     spent = journal.spend(source="bot", since=start) if journal else 0.0
     traded = journal.trades_opened_since(start, "paper" if paper else "mt5") if journal else 0
-    return block_reason(state["paused"], open_count, pnl, spread_points, config, spent, traded), spread_points
+    blocked = block_reason(state["paused"], open_count, pnl, spread_points, config, spent, traded)
+    if not blocked:  # last: the calendar is a network read, once an hour at most
+        currencies = (getattr(symbol_info, "currency_base", ""), getattr(symbol_info, "currency_profit", ""))
+        blocked = news.blackout(currencies, config["NEWS_BLACKOUT_MINUTES"])
+        if news.cache["problem"] and state.get("news_problem") != news.cache["problem"]:
+            state["news_problem"] = news.cache["problem"]
+            notify(config, news.cache["problem"])  # once per new problem: the owner should know the pause is off
+    return blocked, spread_points
 
 
 def open_trade(config, state, side, reason, closed_candles, tick, symbol_info, spread_points, decided_by):

@@ -335,6 +335,7 @@ const FIELDS = [
   ]],
   ["Filters", "When not to trade", [
     ["MAX_SPREAD_POINTS", "number", null, "Skip entries while the spread is wider than this"],
+    ["NEWS_BLACKOUT_MINUTES", "number", null, "No new trades this many minutes before and after high-impact news for the market's currencies (US jobs, Fed, CPI ...). 0 = off"],
   ]],
   ["Broker", "MT5 order details", [
     ["CONTRACT_SIZE", "number", null, "Units per lot: 100 for gold, 100000 for most forex"],
