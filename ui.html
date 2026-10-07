@@ -68,6 +68,18 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: tran
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--text); transition: left .15s; }
 .switch.on { background: var(--win); }
 .switch.on::after { left: 23px; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.gcard { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; cursor: pointer; display: flex; flex-direction: column; }
+.gcard.on { border-color: var(--accent); }
+.gcard .agent-head b { font-size: 17px; }
+.rule { background: var(--bg); border-radius: 10px; padding: 12px 14px; font-size: 14px; line-height: 1.5; flex: 1; }
+.picky { display: flex; justify-content: space-between; align-items: baseline; margin-top: 14px; }
+.picky .label { color: var(--accent); }
+.bars { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 6px; }
+.bars i { height: 4px; border-radius: 2px; background: var(--line); }
+.bars i.lit { background: var(--accent); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.tags span { background: var(--panel2); border-radius: 8px; padding: 3px 9px; font-size: 12px; color: var(--muted); }
 .mini { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
 .mini > div { background: var(--panel2); border-radius: 12px; padding: 12px; }
 .mini b { font-size: 22px; display: block; }
@@ -208,10 +220,10 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
 
   <section id="agents" hidden>
     <div class="sub" style="margin: -8px 0 14px">Each strategy is one way of spotting a trade. Turn on the ones you want; your safety limits still have the last word. Changes apply the next time the bot starts.</div>
-    <div class="three">
-      <div class="card"><div class="label" style="color: var(--accent)">• Your agents</div><div class="list" id="agentlist"></div></div>
+    <div class="gallery" id="agentlist"></div>
+    <div class="row" style="margin-top: 14px">
       <div class="card" id="agent"></div>
-      <div class="card"><div class="label" style="color: var(--accent)">• Decisions</div><div class="feed" id="agentfeed"></div></div>
+      <div class="card" style="flex: 0 1 380px"><div class="label" style="color: var(--accent)">• Its latest decisions</div><div class="feed" id="agentfeed"></div></div>
     </div>
   </section>
 
@@ -303,9 +315,10 @@ async function api(path, body) {
   return data;
 }
 
-let maxTrades = 0;
+let maxTrades = 0, timeframeNow = "M15";
 function showMode(settings) {
   mode = settings.MODE;
+  timeframeNow = settings.TIMEFRAME;
   maxTrades = +settings.MAX_TRADES_PER_DAY || 0;
   for (const button of $("modes").children) button.classList.toggle("on", button.dataset.mode === mode);
   $("where").textContent = `${settings.SYMBOL} · ${settings.TIMEFRAME} · brain ${settings.BRAIN}` + (mode === "live" ? " · REAL MONEY" : "");
@@ -489,31 +502,49 @@ const feedHtml = (items) => items.length ? items.map((d) => `
 const WHO = { bot: "bot", replay: "past-price test", paper: "Paper", mt5: "Real or demo", rules: "Strategy", ai: "AI", hybrid: "Strategy + AI", webhook: "TradingView", telegram: "Telegram" };
 const OUTCOME = { sl: "Stop loss", tp: "Take profit", closed: "Closed by hand" };
 
-// Plain-English name and one-line idea for each strategy; the code name stays in small print.
+// Plain-English name, idea, exact rule (it must match strategies.py) and how many conditions must all agree.
 const PLAIN = {
-  ma_cross: ["Average crossover", "Buys when the short-term average price climbs above the long-term one, sells when it drops below."],
-  trend_pullback: ["Buy the dip in a trend", "When the market is clearly going one way, waits for a small step back, then trades in that direction."],
-  bollinger_breakout: ["Breakout after a quiet spell", "Waits for a calm, narrow market, then follows the price when it suddenly breaks out."],
-  rsi_reversion: ["Bounce after a big move", "When price has run too far too fast, bets it bounces back part of the way."],
-  mr_zscore: ["Snap back to normal", "When price stretches far from its usual level in a calm market, bets it returns."],
+  ma_cross: ["Average crossover", "Follows the direction the average price turns. Trades the most often.",
+    "Buy when the 10-candle average price crosses above the 30-candle average. Sell on the opposite cross.", 1],
+  bollinger_breakout: ["Breakout after a quiet spell", "Waits for a calm, narrow market, then follows the price when it breaks out.",
+    "Buy when price closes above the Bollinger bands right after they had narrowed to half their recent width. Sell on a close below them.", 2],
+  rsi_reversion: ["Bounce after a big move", "When price has run too far too fast, bets on a bounce back.",
+    "Buy when RSI climbs back above 30 just after a close below the lower Bollinger band. Sell when RSI drops back below 70 after a close above the upper band.", 2],
+  trend_pullback: ["Buy the dip in a trend", "Trades with a clear trend, but only after a small step back.",
+    "Buy when the 50-candle average is rising, price dipped to the 20-candle average in the last 3 candles and now closes back above it on a green candle, with RSI between 40 and 65. Sell on the mirror image.", 5],
+  mr_zscore: ["Snap back to normal", "Only in calm, trendless markets: bets a stretched price returns to its average.",
+    "Buy when the bigger timeframe shows no trend and no volatility spike, price has stretched at least 2 ATR below its 20-candle average on a fresh move, and a candle then closes above the one before. Sell on the mirror image.", 6],
 };
+const PICKY = ["", "trades most often", "trades often", "picky", "picky", "very picky", "very picky"];
+const pickyBars = (n) => [1, 2, 4, 6].map((step) => `<i class="${n >= step ? "lit" : ""}"></i>`).join("");
 const plainName = (name) => (PLAIN[name] || [name])[0];
 
 async function loadAgents() {
   agentList = await api("/api/agents");
   if (!agentList.some((a) => a.name === picked)) picked = (agentList.find((a) => a.armed) || agentList[0]).name;
-  $("agentlist").innerHTML = agentList.map((a) => `
-    <div class="agent ${a.armed ? "armed" : ""} ${a.name === picked ? "on" : ""}" data-name="${esc(a.name)}">
-      <b>${esc(plainName(a.name))}</b><div class="sub">${a.armed ? "On" : "Off"} · ${a.totals.trades ? `won ${Math.round(a.totals.win_rate * 100)}% of ${a.totals.trades} trades` : "no trades yet"}</div></div>`).join("");
+  const unit = { M: "m", H: "h", D: "d", W: "w" }[timeframeNow[0]];
+  const candleTag = () => unit ? timeframeNow.slice(1) + unit + " candles" : timeframeNow;  // M15 -> 15m candles
+  const order = Object.keys(PLAIN);  // least to most picky, like the cards on AutoBotSignal
+  $("agentlist").innerHTML = [...agentList].sort((x, y) => order.indexOf(x.name) - order.indexOf(y.name)).map((a) => {
+    const [name, idea, rule, conditions] = PLAIN[a.name] || [a.name, a.about, a.about, 0];
+    return `<div class="gcard ${a.name === picked ? "on" : ""}" data-name="${esc(a.name)}">
+      <div class="agent-head"><b>${esc(name)}</b><button class="switch ${a.armed ? "on" : ""}" data-arm="${esc(a.name)}" title="${a.armed ? "Turn off" : "Turn on"}"></button></div>
+      <div class="sub" style="margin: 6px 0 10px">${esc(idea)}</div>
+      <div class="rule">${esc(rule)}</div>
+      <div class="picky"><span class="label">How picky</span><b>${PICKY[conditions] || ""}</b></div>
+      <div class="bars">${pickyBars(conditions)}</div>
+      <div class="tags"><span>${esc(candleTag())}</span><span>${conditions} condition${conditions === 1 ? "" : "s"}</span>
+        <span>${a.totals.trades ? `won ${Math.round(a.totals.win_rate * 100)}% of ${a.totals.trades}` : "no record yet"}</span><span class="${a.armed ? "win" : ""}">${a.armed ? "On" : "Off"}</span></div>
+    </div>`;
+  }).join("");
   const a = agentList.find((x) => x.name === picked), t = a.totals;
   const verdict = t.trades >= 100 ? "Enough trades to judge it. Turning it on is still your call."
     : t.trades >= 30 ? "Early results. Watch it a while longer before trusting it."
     : "Too few trades to tell yet. Try it on past prices first (Advanced → Train AI).";
   const tone = t.net > 0 ? "win" : t.net < 0 ? "loss" : "";
   $("agent").innerHTML = `
-    <div class="agent-head"><div><b style="font-size: 20px">${esc(plainName(a.name))}</b>
-      <div class="sub">${esc((PLAIN[a.name] || [, a.about])[1])}</div><div class="sub" style="font-size: 11px">code name: ${esc(a.name)}</div></div>
-      <div style="text-align: center"><button class="switch ${a.armed ? "on" : ""}" id="arm" title="${a.armed ? "Turn off" : "Turn on"}"></button><div class="sub">${a.armed ? "On" : "Off"}</div></div></div>
+    <div><span class="label">Record of</span> <b style="font-size: 18px">${esc(plainName(a.name))}</b>
+      <span class="sub" style="font-size: 11px">· code name ${esc(a.name)}</span></div>
     <div class="mini">
       <div><b class="${tone}">${t.trades ? Math.round(t.win_rate * 100) + "%" : "—"}</b><span class="sub">of trades won (${t.wins} won, ${t.losses} lost)</span></div>
       <div><b>${t.trades}</b><span class="sub">trades finished (${a.live_trades} paper or live, ${t.trades - a.live_trades} tested on past prices)</span></div>
@@ -525,15 +556,17 @@ async function loadAgents() {
   $("agentfeed").innerHTML = feedHtml(a.decisions);
 }
 
-$("agentlist").addEventListener("click", (event) => {
-  const card = event.target.closest(".agent");
-  if (card) { picked = card.dataset.name; loadAgents(); }
-});
-$("agent").addEventListener("click", async (event) => {
-  if (event.target.id !== "arm") return;
-  const a = agentList.find((x) => x.name === picked);
-  try { showMode(await api("/api/agents/arm", { name: a.name, armed: !a.armed })); }
-  catch (error) { alert(error.message); }
+$("agentlist").addEventListener("click", async (event) => {
+  const name = event.target.dataset.arm;
+  if (name) {  // the On/Off switch on a card
+    const a = agentList.find((x) => x.name === name);
+    try { showMode(await api("/api/agents/arm", { name, armed: !a.armed })); }
+    catch (error) { alert(error.message); }
+  } else {
+    const card = event.target.closest(".gcard");
+    if (!card) return;
+    picked = card.dataset.name;
+  }
   loadAgents();
 });
 
