@@ -12,7 +12,7 @@ set "PY=%~dp0.venv\Scripts\python.exe"
 
 rem launcher.py loads the scripts by name at run time, so list them for PyInstaller.
 rem MetaTrader5 imports numpy from C, which PyInstaller cannot see either.
-"%PY%" -m PyInstaller --noconfirm --clean --console --name TradeBot --icon tradebot.ico --hidden-import numpy ^
+"%PY%" -m PyInstaller --noconfirm --clean --windowed --name TradeBot --icon tradebot.ico --hidden-import numpy ^
     --hidden-import bot --hidden-import wizard --hidden-import replay ^
     --hidden-import export_history --hidden-import report --hidden-import ui ^
     --add-data "ui.html;." launcher.py || goto :fail
