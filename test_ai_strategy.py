@@ -32,6 +32,92 @@ def fake_call(reply_text, stop_reason="end_turn", error=None, usage=None):
     return patcher, create
 
 
+class FakeHttp:
+    """Stands in for urllib.request.urlopen: records the request, returns a JSON reply or raises."""
+
+    def __init__(self, reply=None, error=None):
+        self.reply, self.error, self.requests = reply, error, []
+
+    def __call__(self, request, timeout):
+        import io
+        import json
+        self.requests.append(request)
+        if self.error:
+            raise self.error
+        return io.BytesIO(json.dumps(self.reply).encode())
+
+    def body(self):
+        import json
+        return json.loads(self.requests[0].data)
+
+
+OPENAI_OK = {"status": "completed", "usage": {"input_tokens": 1000, "output_tokens": 500, "input_tokens_details": {"cached_tokens": 200}},
+             "output": [{"type": "reasoning"}, {"type": "message", "content": [{"type": "output_text", "text": '{"action": "buy", "reason": "trend up"}'}]}]}
+GEMINI_OK = {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": '{"action": "sell", "reason": "lower highs"}'}]}}],
+             "usageMetadata": {"promptTokenCount": 1000, "candidatesTokenCount": 100, "thoughtsTokenCount": 400}}
+
+
+class ProviderTest(unittest.TestCase):
+    def decide(self, provider, http, **extra):
+        config = dict(CONFIG, AI_PROVIDER=provider, OPENAI_API_KEY="sk-o", GEMINI_API_KEY="g-k", **extra)
+        with mock.patch.object(ai_strategy.urllib.request, "urlopen", http):
+            return ai_strategy.decide(CANDLES, config)
+
+    def test_openai_answers_through_the_responses_api(self):
+        http = FakeHttp(OPENAI_OK)
+        decision = self.decide("openai", http)
+        self.assertEqual((decision.signal, decision.reason), ("buy", "AI: trend up"))
+        request, body = http.requests[0], http.body()
+        self.assertEqual(request.full_url, "https://api.openai.com/v1/responses")
+        self.assertEqual(request.get_header("Authorization"), "Bearer sk-o")
+        self.assertEqual(body["model"], ai_strategy.OPENAI_MODEL)
+        self.assertEqual(body["text"]["format"]["type"], "json_schema")
+        self.assertTrue(body["text"]["format"]["strict"])
+        # 800 fresh input at $2, 200 cached at $0.10, 500 output at $10 per million
+        self.assertAlmostEqual(decision.cost_usd, (800 * 2.0 + 200 * 0.10 + 500 * 10.0) / 1e6)
+
+    def test_gemini_answers_through_generate_content(self):
+        http = FakeHttp(GEMINI_OK)
+        decision = self.decide("gemini", http, AI_MODEL="gemini-3.5-flash")
+        self.assertEqual((decision.signal, decision.reason), ("sell", "AI: lower highs"))
+        request, body = http.requests[0], http.body()
+        self.assertTrue(request.full_url.endswith("/models/gemini-3.5-flash:generateContent"))
+        self.assertEqual(request.get_header("X-goog-api-key"), "g-k")
+        schema = body["generationConfig"]["responseSchema"]
+        self.assertEqual((schema["type"], schema["properties"]["action"]["type"]), ("OBJECT", "STRING"))
+        self.assertNotIn("additionalProperties", schema)
+        self.assertAlmostEqual(decision.cost_usd, (1000 * 1.50 + 500 * 7.50) / 1e6)  # thinking billed as output
+
+    def test_every_failure_holds_and_says_why(self):
+        import urllib.error
+        rejected = urllib.error.HTTPError("u", 401, "no", {}, None)
+        cases = [
+            ("openai", FakeHttp(error=rejected), "check OPENAI_API_KEY"),
+            ("gemini", FakeHttp(error=rejected), "check GEMINI_API_KEY"),
+            ("gemini", FakeHttp(error=urllib.error.HTTPError("u", 503, "busy", {}, None)), "API status 503"),
+            ("openai", FakeHttp(error=OSError("offline")), "call failed"),
+            ("openai", FakeHttp(dict(OPENAI_OK, status="incomplete")), "no answer (incomplete)"),
+            ("gemini", FakeHttp({"candidates": [{"finishReason": "SAFETY"}]}), "no answer (SAFETY)"),
+            ("gemini", FakeHttp({"promptFeedback": {"blockReason": "OTHER"}}), "no answer (OTHER)"),
+            ("openai", FakeHttp(dict(OPENAI_OK, output=[{"type": "message", "content": [{"type": "output_text", "text": "not json"}]}])), "unreadable"),
+        ]
+        for provider, http, expected in cases:
+            decision = self.decide(provider, http)
+            self.assertIsNone(decision.signal, expected)
+            self.assertTrue(decision.reason.startswith("AI error"), decision.reason)
+            self.assertIn(expected, decision.reason)
+
+    def test_unknown_provider_is_refused_at_startup(self):
+        import tempfile
+        from pathlib import Path
+        import config as settings
+        with tempfile.TemporaryDirectory() as folder:
+            env = Path(folder, ".env")
+            env.write_text("AI_PROVIDER=grok\n", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                settings.load_config(env)
+
+
 class DecideTest(unittest.TestCase):
     def ask(self, reply_text='{"action": "buy", "reason": "trend up"}', experience="", candidates=None, **kwargs):
         patcher, create = fake_call(reply_text, **kwargs)

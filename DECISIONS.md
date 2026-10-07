@@ -190,3 +190,14 @@
 - ถอนการติดตั้งลบ .env (มี key) แต่เก็บ journal.db
 - ไม่แก้: AI ช้า >60 วิ กับสัญญาณช่วงตลาดปิดในโหมด paper (ต่ำ ต้องรู้ offset เวลา server)
 - ไม่บังคับยืนยัน MODE=live ฝั่ง server: ใครเรียก API ได้ก็แก้ .env ตรงๆ ได้อยู่แล้ว หน้าเว็บถามยืนยันแล้ว
+
+## 2026-10-07 เลือก AI ได้ 3 เจ้า: Claude, GPT, Gemini
+
+- AI_PROVIDER = claude | openai | gemini, key ของใครของมัน (ANTHROPIC/OPENAI/GEMINI_API_KEY), AI_MODEL ว่าง = ค่าเริ่ม
+- GPT กับ Gemini เรียกผ่าน HTTPS ด้วย urllib ไม่ลง SDK เพิ่ม; ทุกเจ้าผ่าน ask() ตัวเดียว ตอบ JSON schema เดียวกัน
+  - GPT: Responses API, text.format json_schema strict, รุ่นเริ่ม gpt-6.1-sol ($2 / $0.10 cached / $10)
+  - Gemini: generateContent, responseSchema (ตัว type พิมพ์ใหญ่ ไม่มี additionalProperties), รุ่นเริ่ม gemini-3.8-flash
+  - ราคา Gemini ใช้ $1.50/$7.50 (ราคาหลังโปรหมด 2026-12-31) ให้งบรายวันประเมินเกินไว้ก่อน ปลอดภัยกว่า
+- ทุก error ของทุกเจ้า = hold พร้อมบอกเหตุผล ไม่มีวันเทรดเพราะ AI พัง
+- ยังไม่ได้ยิง GPT/Gemini จริง (ไม่มี key) ทดสอบด้วยการจำลองคำตอบตามเอกสารทางการเดือนตุลาคม 2026
+- wizard แบบ console ยังถามแค่ key ของ Claude; เลือกเจ้าอื่นในหน้า Settings

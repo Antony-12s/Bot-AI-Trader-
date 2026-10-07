@@ -251,7 +251,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
 const FIELDS = [
   ["Execution", "Mode, brain, market, size", [
     ["MODE", "choice", ["dry", "demo", "live"], "dry = paper only. demo sends orders on a demo account. live = real money."],
-    ["BRAIN", "choice", ["rules", "ai", "hybrid"], "rules is free. ai decides every candle, hybrid only judges setups; both call Claude."],
+    ["BRAIN", "choice", ["rules", "ai", "hybrid"], "rules is free. ai decides every candle, hybrid only judges setups; both call the AI chosen under AI &amp; Telegram."],
     ["SYMBOL", "text", null, "Exactly as your broker names it (XAUUSD, XAUUSDm, GOLD ...)"],
     ["TIMEFRAME", "choice", ["M1", "M5", "M15", "M30", "H1", "H4", "D1"], "Candle size the bot decides on"],
     ["LOT", "number", null, "Size of every order"],
@@ -276,8 +276,12 @@ const FIELDS = [
     ["FILLING", "choice", ["IOC", "FOK", "RETURN"], "Change it if orders fail with Unsupported filling mode"],
     ["MAGIC", "number", null, "Tags this bot's orders so it only counts its own"],
   ]],
-  ["Keys & Telegram", "AI key, Telegram bot", [
-    ["ANTHROPIC_API_KEY", "password", null, "Leave blank to keep the stored key"],
+  ["AI & Telegram", "Claude, GPT or Gemini; Telegram bot", [
+    ["AI_PROVIDER", "choice", ["claude", "openai", "gemini"], "Which AI decides when BRAIN is ai or hybrid. Each needs its own key below."],
+    ["AI_MODEL", "text", null, "Empty = default: claude-sonnet-5-5, gpt-6.1-sol or gemini-3.8-flash. The spend estimate uses the default's prices."],
+    ["ANTHROPIC_API_KEY", "password", null, "Claude, from platform.claude.com. Leave blank to keep the stored key"],
+    ["OPENAI_API_KEY", "password", null, "GPT, from platform.openai.com. Leave blank to keep the stored key"],
+    ["GEMINI_API_KEY", "password", null, "Gemini, from aistudio.google.com. Leave blank to keep the stored key"],
     ["TELEGRAM_TOKEN", "password", null, "From @BotFather. Leave blank to keep the stored one"],
     ["TELEGRAM_CHAT_ID", "text", null, "Your chat id"],
   ]],

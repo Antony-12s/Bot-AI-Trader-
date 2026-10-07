@@ -16,7 +16,11 @@ DEFAULTS = {
     "MODE": "dry",
     "BRAIN": "rules",
     "STRATEGY": "trend_pullback",
+    "AI_PROVIDER": "claude",
+    "AI_MODEL": "",
     "ANTHROPIC_API_KEY": "",
+    "OPENAI_API_KEY": "",
+    "GEMINI_API_KEY": "",
     "AI_BUDGET_USD": "5",
     "SYMBOL": "XAUUSD",
     "TIMEFRAME": "M15",
@@ -74,6 +78,8 @@ def load_config(env_path=ENV_PATH):
         raise SystemExit(f"MODE must be dry, demo or live, got {config['MODE']!r}")
     if config["BRAIN"] not in ("rules", "ai", "hybrid"):
         raise SystemExit(f"BRAIN must be rules, ai or hybrid, got {config['BRAIN']!r}")
+    if config["AI_PROVIDER"] not in ("claude", "openai", "gemini"):
+        raise SystemExit(f"AI_PROVIDER must be claude, openai or gemini, got {config['AI_PROVIDER']!r}")
     from strategies import STRATEGIES, selected  # here to keep strategies.py free to import config
     unknown = [name for name in selected(config) if name not in STRATEGIES]
     if unknown or not selected(config):

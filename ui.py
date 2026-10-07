@@ -23,7 +23,7 @@ PORT = int(os.environ.get("TRADEBOT_PORT", "8765"))  # change it if another prog
 PAGE = Path(__file__).with_name("ui.html")
 TEMPLATE_PATH = ENV_PATH.with_name(".env.example")
 LOG_PATH = APP_DIR / "bot.log"
-SECRETS = ("ANTHROPIC_API_KEY", "TELEGRAM_TOKEN")  # never sent to the page, only "set" or not
+SECRETS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "TELEGRAM_TOKEN")  # never sent to the page, only "set" or not
 # ponytail: one loop of the bot (an AI call included) must finish within this, or it shows as stopped
 ALIVE_SECONDS = 120
 SAVE_LOCK = threading.RLock()  # re-entrant: arm() and switch_source() hold it around save_settings()
