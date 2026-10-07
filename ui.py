@@ -354,8 +354,8 @@ def follow_account(live_ok=False, path=ENV_PATH):
     Demo is followed at once; a real account only with live_ok (the user said yes), else {"ask": login}.
     Until then MODE stays demo and the bot refuses the real account (risk.account_error)."""
     account = mt5_call("status")
-    if not account.get("logged_in"):
-        return {}
+    if not account.get("logged_in") or not account.get("online"):
+        return {}  # offline can mean the broker refused the login: that account is not filed, and decides nothing
     kind = "demo" if account["demo"] else "live"
     values = read_env(path)
     slot = {f"{kind.upper()}_LOGIN": str(account["login"]), f"{kind.upper()}_SERVER": account["server"]}

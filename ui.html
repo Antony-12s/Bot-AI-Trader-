@@ -694,7 +694,7 @@ function showLink(state) {
   const [kind, text, tip] = !state ? ["down", "MT5 · not linked", "TradeBot cannot reach MetaTrader 5. Click to open it."]
     : !state.connected ? ["down", "MT5 · not linked", state.error || "TradeBot cannot reach MetaTrader 5. Click to open it."]
     : !state.logged_in ? ["partial", "MT5 · no account", "MetaTrader 5 is open but logged in to no account. Log in on the MetaTrader 5 page."]
-    : !state.online ? ["partial", "MT5 · offline", `Account ${state.login} is not connected to the broker's server right now. Click to look in MT5.`]
+    : !state.online ? ["down", "MT5 · offline", `Account ${state.login} on ${state.server} is not connected to the broker. Usually a wrong server or password, an expired demo account, or no internet: MT5's Journal tab says which. Click to open MT5.`]
     : ["linked", "MT5 · linked", `Linked to account ${state.login} on ${state.server}. Click to open MetaTrader 5.`];
   $("mt5btn").className = "mt5btn " + kind; $("mt5btn").textContent = text; $("mt5btn").title = tip;
 }
@@ -725,7 +725,7 @@ async function loadBroker() {
   try { account = await api("/api/broker"); } catch (error) { showLink(null); throw error; }
   showLink(account);
   const accountKind = account.demo ? "demo" : "live", filed = (account.accounts || {})[accountKind] || {};
-  if (account.logged_in && mode && (accountKind !== mode || filed.login !== String(account.login))) followAccount(account);
+  if (account.logged_in && account.online && mode && (accountKind !== mode || filed.login !== String(account.login))) followAccount(account);
   const kind = account.logged_in ? (account.demo ? "demo" : "real") : "";
   $("balance").className = "balance " + kind;
   $("balance").innerHTML = account.logged_in ? `<b>${account.balance.toFixed(2)} ${esc(account.currency)}</b><span>${account.demo ? "DEMO" : "REAL MONEY"}</span>` : "";
@@ -746,7 +746,7 @@ async function loadBroker() {
     : `<div class="agent-head"><b style="font-size: 20px">${esc(account.login)}</b><span class="pill ${kind}">${kind === "demo" ? "DEMO" : "REAL MONEY"}</span></div>
       <div class="sub">${esc(account.name)} · ${esc(account.company)}</div>
       <div class="kv"><span>Server</span><b>${esc(account.server)}</b>
-        <span>Connection</span><b class="${account.online ? "win" : "loss"}">${account.online ? "online" : "offline, MT5 is reconnecting"}</b>
+        <span>Connection</span><b class="${account.online ? "win" : "loss"}">${account.online ? "online" : "offline: wrong server or password, an expired demo, or no internet (MT5's Journal says which)"}</b>
         <span>Balance</span><b>${account.balance.toFixed(2)} ${esc(account.currency)}</b>
         <span>Equity</span><b>${account.equity.toFixed(2)} ${esc(account.currency)}</b>
         <span>Leverage</span><b>1:${account.leverage}</b></div>

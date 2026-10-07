@@ -220,8 +220,9 @@ class BrokerTest(unittest.TestCase):
     def test_mode_follows_the_mt5_account_but_real_money_needs_a_yes(self):
         import tempfile
         from pathlib import Path
-        demo = {"logged_in": True, "demo": True, "login": 111, "server": "XMGlobal-MT5 Demo"}
-        real = {"logged_in": True, "demo": False, "login": 450272430, "server": "XMGlobal-MT5 20"}
+        demo = {"logged_in": True, "online": True, "demo": True, "login": 111, "server": "XMGlobal-MT5 Demo"}
+        real = {"logged_in": True, "online": True, "demo": False, "login": 450272430, "server": "XMGlobal-MT5 20"}
+        refused = {"logged_in": True, "online": False, "demo": False, "login": 337008724, "server": "XMGlobal-MT5 9"}
         with tempfile.TemporaryDirectory() as folder:
             env = Path(folder, ".env")
             env.write_text("MODE=demo\n", encoding="utf-8")
@@ -242,6 +243,9 @@ class BrokerTest(unittest.TestCase):
             with mock.patch.object(broker, "status", return_value=real):
                 self.assertEqual(ui.follow_account(False, env)["settings"]["MODE"], "live")  # no question: nothing switches
             self.assertEqual(ui.read_env(env)["LIVE_LOGIN"], "450272430")
+            with mock.patch.object(broker, "status", return_value=refused):  # the broker said "Invalid account"
+                self.assertEqual(ui.follow_account(True, env), {})
+            self.assertEqual(ui.read_env(env)["LIVE_LOGIN"], "450272430")  # a refused login is never filed
 
     def test_dashboard_refuses_to_switch_accounts_under_a_running_bot(self):
         mocks = self.patched()
