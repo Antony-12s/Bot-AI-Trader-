@@ -752,15 +752,11 @@ async function loadBroker() {
   $("balance").className = "balance " + kind;
   $("balance").innerHTML = account.logged_in ? `<b>${account.balance.toFixed(2)} ${esc(account.currency)}</b><span>${account.demo ? "DEMO" : "REAL MONEY"}</span>` : "";
   $("navacct").innerHTML = kind ? `<span class="pill ${kind}">${kind.toUpperCase()}</span>` : "";
-  const setup = account.own_setup || {};
   const ownBlock = account.own
     ? `<div class="ownbox"><div><b>TradeBot's own MT5</b><div class="sub">Runs hidden, apart from your own MetaTrader.</div></div>
         <button class="ghost" data-mt5show="${account.shown ? 0 : 1}">${account.shown ? "Hide MT5" : "Show MT5"}</button></div>`
-    : setup.state === "copying" ? `<div class="ownbox"><b>Setting up TradeBot's own MT5…</b></div>`
     : `<div class="ownbox" style="display: block"><b>Using this PC's MetaTrader 5</b>
-        <div class="sub" style="margin: 4px 0 10px">The bot shares it with your manual trading. Give TradeBot its own copy (about 120 MB, copied from the MT5 already installed) so it logs in and trades on its own, hidden.</div>
-        ${setup.state === "failed" ? `<p class="loss">${esc(setup.error)}</p>` : ""}
-        <button class="save" data-mt5own="1">Give TradeBot its own MT5</button></div>`;
+        <div class="sub" style="margin-top: 4px">The bot shares it with your manual trading: logging in here, or switching Demo / Live, changes the account your MetaTrader 5 shows too.</div></div>`;
   const saved = account.accounts || {};
   const slots = `<div class="slots">${["demo", "live"].map((m) => `
     <div class="slot ${mode === m ? "on" : ""}"><span class="pill ${m === "demo" ? "demo" : "real"}">${m.toUpperCase()}</span>
@@ -828,19 +824,19 @@ async function setupState() {
   const [acct, settings, bot] = await Promise.all([api("/api/broker"), api("/api/settings"), api("/api/bot")]);
   if (acct.logged_in && !symbolNames) symbolNames = await api("/api/broker/symbols");
   const symbolOk = acct.logged_in && symbolNames.includes(settings.SYMBOL);
-  return { acct, settings, bot, symbolOk, ready: acct.own && acct.logged_in && symbolOk && bot.configured };
+  return { acct, settings, bot, symbolOk, ready: acct.logged_in && symbolOk && bot.configured };
 }
 
 async function loadSetup() {
   const { acct, settings, bot, symbolOk } = await setupState();
   const install = acct.install || {};
   const steps = [
-    ["Give TradeBot its own MetaTrader 5", acct.own, `
-      <div class="sub">TradeBot trades through MetaTrader 5, the free terminal most brokers use. It keeps its own hidden copy, apart from any MT5 you trade in yourself.</div>
-      ${acct.installed ? (acct.own_setup || {}).state === "copying" ? `<p>Copying MetaTrader 5 into TradeBot (about 120 MB)…</p>`
-        : `${(acct.own_setup || {}).state === "failed" ? `<p class="loss">${esc(acct.own_setup.error)}</p>` : ""}
-          <div class="picks"><button class="save" data-act="own">Set up TradeBot's own MT5</button></div>
-          <div class="sub" style="margin-top: 8px">Copies the program from the MetaTrader 5 already on this PC. Your own accounts and passwords are not copied.</div>`
+    // TradeBot's own portable MT5 is switched off for now: a copied terminal answers no Python IPC
+    // (-10004 / -10005, seen 2026-10-07). It uses the PC's MetaTrader 5 until that is solved.
+    ["Install MetaTrader 5", acct.connected || acct.own, `
+      <div class="sub">TradeBot trades through MetaTrader 5, the free terminal most brokers use.</div>
+      ${acct.installed ? `<p>MetaTrader 5 is installed but TradeBot cannot reach it: open it once, then press Check again.</p>
+          <button class="ghost" data-act="recheck">Check again</button>`
       : install.state === "downloading" ? `<p>Downloading the official installer from MetaQuotes…</p>`
         : install.state === "launched" ? `<p>The MetaTrader 5 installer is open: click through it, let MT5 start, then press Check again.</p>
             <button class="ghost" data-act="recheck">Check again</button>`
