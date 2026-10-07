@@ -201,3 +201,16 @@
 - ทุก error ของทุกเจ้า = hold พร้อมบอกเหตุผล ไม่มีวันเทรดเพราะ AI พัง
 - ยังไม่ได้ยิง GPT/Gemini จริง (ไม่มี key) ทดสอบด้วยการจำลองคำตอบตามเอกสารทางการเดือนตุลาคม 2026
 - wizard แบบ console ยังถามแค่ key ของ Claude; เลือกเจ้าอื่นในหน้า Settings
+
+## 2026-10-07 desktop เต็มตัว: windowed exe, tray, watchdog
+
+- exe เป็น --windowed (ไม่มี console) เครื่องมือ .bat ใช้ AttachConsole ยืม console ของ cmd
+- ปิดหน้าต่าง = ซ่อนไป tray (pystray), AUTO_START_BOT + watchdog ฟื้นบอทที่ตายเองหลัง 30 วิ
+  ยอมแพ้หลังตายเร็วติดกัน 6 ครั้ง (กันวนเพราะตั้งค่าผิด)
+- ThreadingHTTPServer ของ stdlib ตั้ง SO_REUSEADDR: บน Windows แอปที่สองจองพอร์ตซ้ำได้ → ใช้ SO_EXCLUSIVEADDRUSE
+- **เปิดเองตอนเปิดเครื่อง ให้ตัวติดตั้งทำ (Startup shortcut) ห้ามแอปเขียน Run key เอง**
+  - ครั้งแรกให้แอปเขียน HKCU\...\Run เอง → Defender ตีเป็น Behavior:Win32/Persistence.A!ml
+    แล้วบล็อก exe ตัวนั้นทุกที่ (false positive แต่พฤติกรรมเหมือนมัลแวร์จริง: exe ไม่เซ็น + ฝังตัวเอง)
+  - test_desktop เช็กว่าในโค้ดไม่มีการเขียน Run key อีก
+- การทดสอบ installer ซ้อนกับของผู้ใช้ทำให้รายการ Apps & features และ Start Menu หาย (AppId เดียวกัน)
+  ซ่อมแล้วด้วยการลงทับ; ต่อไปทดสอบจาก dist\TradeBot ตรงๆ

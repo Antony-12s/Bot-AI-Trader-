@@ -355,7 +355,6 @@ class Handler(BaseHTTPRequestHandler):
             "/api/broker/login": lambda: broker_login(body),  # the password is not stored or logged
             "/api/ai/test": lambda: test_ai_key(body),  # the key is only sent to its own AI company
             "/api/app/show": lambda: (show_window and show_window(), {"shown": bool(show_window)})[1],
-            "/api/app/login": lambda: {"run_at_login": __import__("desktop").run_at_login(bool(body.get("on")))},
             "/api/broker/install": lambda: (__import__("broker").start_install(), {"started": True})[1],
         }
         action = actions.get(urlparse(self.path).path)

@@ -19,6 +19,8 @@ UninstallDisplayIcon={app}\TradeBot.exe
 
 [Tasks]
 Name: desktopicon; Description: "Create a desktop shortcut"
+; The installer, not the app, sets this up: an app adding itself to startup trips Defender's malware heuristics.
+Name: startup; Description: "Start TradeBot when Windows starts (it opens in the tray)"; Flags: unchecked
 
 [Files]
 Source: "dist\TradeBot\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
@@ -36,13 +38,10 @@ Name: "{autoprograms}\TradeBot\Advanced\Train AI"; Filename: "{app}\train.bat"; 
 Name: "{autoprograms}\TradeBot\Advanced\Run forever (VPS)"; Filename: "{app}\run_forever.bat"; WorkingDir: "{app}"
 Name: "{autoprograms}\TradeBot\Uninstall TradeBot"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\TradeBot"; Filename: "{app}\TradeBot.exe"; Parameters: "ui.py"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{userstartup}\TradeBot"; Filename: "{app}\TradeBot.exe"; Parameters: "ui.py --background"; WorkingDir: "{app}"; Tasks: startup
 
 [Run]
 Filename: "{app}\TradeBot.exe"; Parameters: "ui.py"; WorkingDir: "{app}"; Description: "Launch TradeBot"; Flags: postinstall nowait skipifsilent
-
-[Registry]
-; Not created here (ValueType none): the app's "Start with Windows" switch writes it. Uninstall removes it.
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "TradeBot"; ValueType: none; Flags: uninsdeletevalue
 
 [UninstallDelete]
 ; .env holds the Anthropic key and Telegram token: do not leave them behind. journal.db (trade history) stays.

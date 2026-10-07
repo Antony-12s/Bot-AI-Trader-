@@ -1,37 +1,23 @@
-"""Desktop extras for the app window: the tray icon and starting TradeBot with Windows."""
-import sys
+"""Desktop extras for the app window: the tray icon, and whether TradeBot starts with Windows.
+
+Starting with Windows is set by the installer (a Startup-folder shortcut the user ticks while
+installing), never written by the app itself: an unsigned program that adds itself to Windows
+startup on its own looks like malware persistence, and Microsoft Defender quarantines it
+(Behavior:Win32/Persistence.A!ml, seen on 2026-10-07).
+"""
+import os
 from pathlib import Path
 
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"  # per user: no admin rights needed
-RUN_NAME = "TradeBot"
 ICON = Path(__file__).with_name("tradebot.ico")
 
 
-def launch_command():
-    """How Windows should start TradeBot at login: straight to the tray, no window."""
-    if getattr(sys, "frozen", False):
-        return f'"{sys.executable}" ui.py --background'
-    return f'"{sys.executable}" "{Path(__file__).with_name("ui.py")}" --background'
+def startup_shortcut():
+    """The shortcut the installer's "Start TradeBot when Windows starts" task creates."""
+    return Path(os.environ.get("APPDATA", ""), r"Microsoft\Windows\Start Menu\Programs\Startup\TradeBot.lnk")
 
 
-def run_at_login(enabled=None):
-    """Read, or set then read, whether TradeBot starts when this Windows user logs in."""
-    try:
-        import winreg
-    except ImportError:  # not Windows
-        return False
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
-        if enabled is True:
-            winreg.SetValueEx(key, RUN_NAME, 0, winreg.REG_SZ, launch_command())
-        elif enabled is False:
-            try:
-                winreg.DeleteValue(key, RUN_NAME)
-            except FileNotFoundError:
-                pass
-        try:
-            return winreg.QueryValueEx(key, RUN_NAME)[0] == launch_command()
-        except FileNotFoundError:
-            return False
+def run_at_login():
+    return startup_shortcut().exists()
 
 
 def tray(on_open, on_start, on_stop, on_quit, on_stop_and_quit):

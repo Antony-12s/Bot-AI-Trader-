@@ -1,7 +1,5 @@
-import sys
 import tempfile
 import unittest
-from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -10,41 +8,19 @@ import desktop
 import ui
 
 
-class FakeRegistry:
-    """Just enough of winreg for run_at_login, kept in a dict: the real Run key is never touched."""
-    HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE, REG_SZ = 1, 2, 4, 1
-
-    def __init__(self):
-        self.values = {}
-
-    @contextmanager
-    def OpenKey(self, root, path, reserved, access):
-        yield path
-
-    def SetValueEx(self, key, name, reserved, kind, value):
-        self.values[(key, name)] = value
-
-    def DeleteValue(self, key, name):
-        if (key, name) not in self.values:
-            raise FileNotFoundError(name)
-        del self.values[(key, name)]
-
-    def QueryValueEx(self, key, name):
-        if (key, name) not in self.values:
-            raise FileNotFoundError(name)
-        return self.values[(key, name)], self.REG_SZ
-
-
 class RunAtLoginTest(unittest.TestCase):
-    def test_switch_on_and_off_starts_in_the_tray(self):
-        registry = FakeRegistry()
-        with mock.patch.dict(sys.modules, winreg=registry):
+    def test_reads_the_installers_startup_shortcut(self):
+        with tempfile.TemporaryDirectory() as folder, mock.patch.dict("os.environ", APPDATA=folder):
             self.assertFalse(desktop.run_at_login())
-            self.assertTrue(desktop.run_at_login(True))
-            command = registry.values[(desktop.RUN_KEY, "TradeBot")]
-            self.assertTrue(command.endswith("--background"), command)
-            self.assertFalse(desktop.run_at_login(False))
-            self.assertFalse(desktop.run_at_login(False))  # already off: no error
+            desktop.startup_shortcut().parent.mkdir(parents=True)
+            desktop.startup_shortcut().touch()
+            self.assertTrue(desktop.run_at_login())
+
+    def test_the_app_never_adds_itself_to_windows_startup(self):
+        # Defender quarantined the exe (Behavior:Win32/Persistence.A!ml) when it wrote the Run key itself.
+        source = Path(desktop.__file__).read_text(encoding="utf-8") + Path(ui.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("SetValueEx", source)
+        self.assertNotIn("CurrentVersion\\\\Run", source)
 
 
 class WatchdogTest(unittest.TestCase):
