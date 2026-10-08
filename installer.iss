@@ -4,7 +4,7 @@
 
 [Setup]
 AppName=TradeBot
-AppVersion=1.4.2
+AppVersion=1.4.3
 DefaultDirName={localappdata}\Programs\TradeBot
 PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
