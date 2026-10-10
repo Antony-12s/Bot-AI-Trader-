@@ -61,3 +61,43 @@ def stop_levels(side, price, point, digits, stop_points, target_points):
     stop_loss = round(price - direction * stop_points * point, digits)
     take_profit = round(price + direction * target_points * point, digits)
     return stop_loss, take_profit
+
+
+def risk_lot(balance, risk_percent, stop_points, point, loss_per_point_per_lot, volume_min, volume_max, volume_step):
+    """(lot, None) sized so the stop loses risk_percent of balance, or (None, why not).
+
+    loss_per_point_per_lot is what one point against a 1-lot position costs in the account's
+    currency (MT5: trade_tick_value / trade_tick_size * point). Rounded down to the broker's step;
+    a lot under the broker's minimum is refused, not rounded up: that would risk more than asked.
+    """
+    risk_money = balance * risk_percent / 100
+    loss_per_lot = stop_points * loss_per_point_per_lot
+    if risk_money <= 0 or loss_per_lot <= 0:
+        return None, "cannot size the order: no balance or no stop distance"
+    steps = int(risk_money / loss_per_lot / volume_step + 1e-9)
+    lot = round(min(steps * volume_step, volume_max), 8)
+    if lot < volume_min:
+        return None, (f"{risk_percent:g}% of {balance:.2f} is {risk_money:.2f}, less than the smallest lot ({volume_min:g})"
+                      f" loses at this stop ({volume_min * loss_per_lot:.2f}): skipped")
+    return lot, None
+
+
+def moved_stop(side, entry, first_stop, best_price, stop, config, digits):
+    """The stop after break-even and trailing, or None to leave it where it is.
+
+    Both count in R, the trade's first stop distance: BREAKEVEN_R moves the stop to the entry once
+    price has gone that many R in favour; TRAIL_R keeps it that many R behind the best price.
+    A stop only ever moves in the trade's favour. 0 turns either off.
+    """
+    risk = abs(entry - first_stop)
+    if not risk:
+        return None
+    sign = 1 if side == "buy" else -1
+    gained = (best_price - entry) * sign
+    wanted = [stop]
+    if config.get("BREAKEVEN_R") and gained >= config["BREAKEVEN_R"] * risk:
+        wanted.append(entry)
+    if config.get("TRAIL_R"):
+        wanted.append(best_price - sign * config["TRAIL_R"] * risk)
+    best = round(max(wanted, key=lambda level: level * sign), digits)
+    return best if (best - stop) * sign > 10 ** -digits / 2 else None

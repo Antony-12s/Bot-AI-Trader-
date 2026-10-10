@@ -32,7 +32,7 @@ import signals
 from config import ALIVE, ENV_PATH, JOURNAL_PATH, STOP_FLAG, candle_seconds, terminal_args
 from config import load_config as load_settings
 from journal import Journal, summarize
-from risk import account_error, block_reason, day_start, stop_distances, stop_levels
+from risk import account_error, block_reason, day_start, moved_stop, risk_lot, stop_distances, stop_levels
 
 POLL_SECONDS = 5
 STALE_CANDLES = 2  # a candle that closed this many candle lengths ago is old news (market was shut)
@@ -47,8 +47,9 @@ def load_config(env_path=ENV_PATH):
     return config
 
 
-def build_order(side, tick, symbol_info, config, atr_value=None, spread_points=0):
-    """Market order request for mt5.order_send, always with stop loss and take profit.
+def build_order(side, tick, symbol_info, config, atr_value=None, spread_points=0, balance=0.0):
+    """Market order request for mt5.order_send, always with stop loss and take profit, or
+    (None, why) when RISK_PERCENT of the balance cannot pay for the broker's smallest lot.
 
     Stops are ATR multiples when configured, never closer than the broker's minimum stop
     distance or two spreads.
@@ -58,10 +59,18 @@ def build_order(side, tick, symbol_info, config, atr_value=None, spread_points=0
     floor = max(int(getattr(symbol_info, "trade_stops_level", 0) or 0), 2 * spread_points)
     stop_points, target_points = stop_distances(config, symbol_info.point, atr_value, floor)
     stop_loss, take_profit = stop_levels(side, price, symbol_info.point, symbol_info.digits, stop_points, target_points)
+    volume = config["LOT"]
+    if config.get("RISK_PERCENT"):
+        # what one point against 1 lot costs in the account's currency, as the broker values it
+        per_point = symbol_info.trade_tick_value / symbol_info.trade_tick_size * symbol_info.point
+        volume, why = risk_lot(balance, config["RISK_PERCENT"], stop_points, symbol_info.point, per_point,
+                               symbol_info.volume_min, symbol_info.volume_max, symbol_info.volume_step)
+        if volume is None:
+            return None, why
     return {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": config["SYMBOL"],
-        "volume": config["LOT"],
+        "volume": volume,
         "type": mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL,
         "price": price,
         "sl": stop_loss,
@@ -213,7 +222,11 @@ def place_order(side, tick, symbol_info, config, reason="", atr_value=None, spre
     Returns the request dict when the position exists, with position_id set for real
     orders, or None when the order was rejected.
     """
-    request = build_order(side, tick, symbol_info, config, atr_value, spread_points)
+    account = mt5.account_info() if config.get("RISK_PERCENT") else None
+    request = build_order(side, tick, symbol_info, config, atr_value, spread_points, account.balance if account else 0.0)
+    if isinstance(request, tuple):  # (None, why): sized at RISK_PERCENT, not even the smallest lot fits
+        notify(config, f"{side} {config['SYMBOL']} skipped: {request[1]}")
+        return None
     summary = (
         f"{side} {request['volume']} {request['symbol']} @ {request['price']} "
         f"sl {request['sl']} tp {request['tp']}"
@@ -317,6 +330,32 @@ def settle_mt5(config, state):
         outcome = {mt5.DEAL_REASON_SL: "sl", mt5.DEAL_REASON_TP: "tp"}.get(last.reason, "closed")
         profit = sum(deal.profit + deal.commission + deal.swap for deal in deals)
         finish_trade(config, state, trade["id"], last.price, last.time, profit, outcome)
+
+
+def manage_stops(config, state):
+    """Break-even and trailing (BREAKEVEN_R, TRAIL_R) for the bot's open MT5 positions, from the live price.
+
+    The journal keeps each trade's first stop, the distance both settings count in. A move the broker
+    refuses (too close to the price) is tried again on the next poll."""
+    journal = state.get("journal")
+    if not journal or not (config.get("BREAKEVEN_R") or config.get("TRAIL_R")):
+        return
+    for trade in journal.open_trades("mt5"):
+        positions = mt5.positions_get(ticket=trade["position_id"]) if trade["position_id"] else None
+        tick, info = mt5.symbol_info_tick(trade["symbol"]), mt5.symbol_info(trade["symbol"])
+        if not positions or tick is None or info is None:
+            continue
+        position = positions[0]
+        price = tick.bid if trade["side"] == "buy" else tick.ask  # the price it would close at now
+        new_stop = moved_stop(trade["side"], trade["entry"], trade["sl"], price, position.sl, config, info.digits)
+        if new_stop is None or abs(price - new_stop) < (info.trade_stops_level or 0) * info.point:
+            continue
+        result = mt5.order_send({"action": mt5.TRADE_ACTION_SLTP, "position": position.ticket, "symbol": trade["symbol"],
+                                 "sl": new_stop, "tp": position.tp, "magic": config["MAGIC"]})
+        if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
+            sign = 1 if trade["side"] == "buy" else -1
+            if (position.sl - trade["entry"]) * sign < 0 <= (new_stop - trade["entry"]) * sign:  # once, not every trailing step
+                notify(config, f"{trade['side']} {trade['symbol']}: stop moved to {new_stop}, the trade can no longer lose")
 
 
 # --- the loop -----------------------------------------------------------------
@@ -545,6 +584,7 @@ def main():
             if ensure_connected(config, state):
                 if config["MODE"] != "dry":
                     settle_mt5(config, state)
+                    manage_stops(config, state)
                 outside_signals(config, state)
                 run_agents(config, state)
             time.sleep(POLL_SECONDS)

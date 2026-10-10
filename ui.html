@@ -321,7 +321,8 @@ const FIELDS = [
     ["MODE", "choice", ["demo", "live"], "demo trades only a demo account (it refuses a real one). live trades any account, real money included."],
     ["SYMBOL", "text", null, "Exactly as your broker names it (XAUUSD, XAUUSDm, GOLD ...)"],
     ["TIMEFRAME", "choice", ["M1", "M5", "M15", "M30", "H1", "H4", "D1"], "Candle size the bot decides on"],
-    ["LOT", "number", null, "Size of every order"],
+    ["LOT", "number", null, "Size of every order, unless RISK_PERCENT is set"],
+    ["RISK_PERCENT", "number", null, "Size each order so its stop loses this % of the balance (1 = 1%). An order whose smallest lot would lose more is skipped. 0 = use LOT"],
   ]],
   ["Caps", "Daily limits", [
     ["MAX_DAILY_LOSS", "number", null, "Stop opening trades once today's realized loss reaches this"],
@@ -334,6 +335,8 @@ const FIELDS = [
     ["ATR_PERIOD", "number", null, "Candles in the ATR"],
     ["SL_POINTS", "number", null, "Fixed stop in points, used when SL_ATR is 0"],
     ["TP_POINTS", "number", null, "Fixed target in points, used when TP_ATR is 0"],
+    ["BREAKEVEN_R", "number", null, "Move the stop to the entry once price went this many stop distances in favour (1 = as far as the stop). 0 = off"],
+    ["TRAIL_R", "number", null, "Keep the stop this many stop distances behind the best price, only ever tightening. 0 = off"],
   ]],
   ["Filters", "When not to trade", [
     ["MAX_SPREAD_POINTS", "number", null, "Skip entries while the spread is wider than this"],

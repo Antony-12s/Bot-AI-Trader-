@@ -269,6 +269,8 @@ def _test_setup(raw, path, months):
         config = load_config(path)
     except SystemExit as error:
         raise ValueError(str(error)) from None
+    if config["RISK_PERCENT"]:  # sized like the live bot: from the account's balance now
+        config["BALANCE"] = float(mt5_call("status").get("balance") or 0)
     months = max(1, min(int(months or 1), 12))
     wanted = months * 30 * 1440 // TF_MINUTES[agent["timeframe"]]
     return agent, config, min(wanted, MAX_BACKTEST_CANDLES), wanted > MAX_BACKTEST_CANDLES

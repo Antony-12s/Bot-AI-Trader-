@@ -113,6 +113,52 @@ class RiskTest(unittest.TestCase):
             self.assertEqual(bot.pnl_today(TICK.time), -12.5)
 
 
+class StopsAndSizeTest(unittest.TestCase):
+    def test_risk_lot(self):
+        self.assertEqual(bot.risk_lot(10000, 1, 500, 0.01, 1.0, 0.01, 100, 0.01), (0.2, None))
+        self.assertEqual(bot.risk_lot(10000, 1, 333, 0.01, 1.0, 0.01, 100, 0.01)[0], 0.3)  # rounded down: 0.3003
+        self.assertEqual(bot.risk_lot(10000, 50, 500, 0.01, 1.0, 0.01, 5, 0.01)[0], 5)  # the broker's maximum
+        lot, why = bot.risk_lot(31.24, 1, 500, 0.01, 1.0, 0.01, 100, 0.01)
+        self.assertIsNone(lot)
+        self.assertIn("less than the smallest lot", why)
+
+    def test_moved_stop(self):
+        be, trail = {"BREAKEVEN_R": 1.0, "TRAIL_R": 0}, {"BREAKEVEN_R": 0, "TRAIL_R": 1.0}
+        self.assertIsNone(bot.moved_stop("buy", 100.0, 99.0, 100.9, 99.0, be, 2))  # 0.9R: not yet
+        self.assertEqual(bot.moved_stop("buy", 100.0, 99.0, 101.0, 99.0, be, 2), 100.0)
+        self.assertIsNone(bot.moved_stop("buy", 100.0, 99.0, 101.5, 100.0, be, 2))  # already there
+        self.assertEqual(bot.moved_stop("buy", 100.0, 99.0, 102.5, 99.0, trail, 2), 101.5)
+        self.assertIsNone(bot.moved_stop("buy", 100.0, 99.0, 101.0, 101.5, trail, 2))  # never loosens
+        self.assertEqual(bot.moved_stop("sell", 100.0, 101.0, 98.0, 101.0, trail, 2), 99.0)
+        self.assertIsNone(bot.moved_stop("buy", 100.0, 99.0, 105.0, 99.0, {}, 2))  # both off
+
+    def test_order_sized_at_risk_percent_or_skipped(self):
+        gold = SimpleNamespace(point=0.01, digits=2, trade_tick_value=1.0, trade_tick_size=0.01,
+                               volume_min=0.01, volume_max=100.0, volume_step=0.01)
+        config = dict(CONFIG, RISK_PERCENT=1.0)
+        self.assertEqual(bot.build_order("buy", TICK, gold, config, balance=10000.0)["volume"], 0.2)
+        self.assertIsNone(bot.build_order("buy", TICK, gold, config, balance=31.24)[0])
+
+    def test_live_stop_moves_to_break_even_once_price_has_run(self):
+        journal = Journal()
+        journal.open_trade("mt5", "r", "XAUUSD", {"side": "buy", "lot": 0.01, "entry": 2650.5, "sl": 2645.5, "tp": 2660.5,
+                                                 "opened_at": TICK.time}, position_id=42)
+        position = SimpleNamespace(ticket=42, sl=2645.5, tp=2660.5)
+        info = SimpleNamespace(digits=2, point=0.01, trade_stops_level=10)
+        notices = []
+        with mock.patch.object(bot.mt5, "positions_get", return_value=(position,)), \
+                mock.patch.object(bot.mt5, "symbol_info_tick", return_value=SimpleNamespace(bid=2656.0, ask=2656.3)), \
+                mock.patch.object(bot.mt5, "symbol_info", return_value=info), \
+                mock.patch.object(bot.mt5, "order_send", return_value=SimpleNamespace(retcode=bot.mt5.TRADE_RETCODE_DONE)) as send, \
+                mock.patch.object(bot, "notify", side_effect=lambda config, text: notices.append(text)):
+            bot.manage_stops(dict(CONFIG, BREAKEVEN_R=1.0), {"journal": journal})
+            bot.manage_stops(CONFIG, {"journal": journal})  # both off: nothing sent
+        (call,) = send.call_args_list
+        self.assertEqual((call.args[0]["action"], call.args[0]["position"], call.args[0]["sl"], call.args[0]["tp"]),
+                         (bot.mt5.TRADE_ACTION_SLTP, 42, 2650.5, 2660.5))
+        self.assertEqual(notices, ["buy XAUUSD: stop moved to 2650.5, the trade can no longer lose"])
+
+
 class OrderTest(unittest.TestCase):
     def test_buy_uses_ask_with_sl_below_and_tp_above(self):
         order = bot.build_order("buy", TICK, GOLD, CONFIG)
