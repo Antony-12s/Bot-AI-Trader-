@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 import MetaTrader5 as mt5
 
 import agents
+from broker import market_kind
 import ai_strategy
 import brain
 import fills
@@ -338,16 +339,20 @@ def manage_stops(config, state):
     The journal keeps each trade's first stop, the distance both settings count in. A move the broker
     refuses (too close to the price) is tried again on the next poll."""
     journal = state.get("journal")
-    if not journal or not (config.get("BREAKEVEN_R") or config.get("TRAIL_R")):
+    if not journal:
         return
+    owners = {"agent:" + agent["id"]: agent for agent in agents.load()}
     for trade in journal.open_trades("mt5"):
+        config_here = agents.with_risk(config, owners.get(trade["brain"]))  # an agent's own break-even / trailing
+        if not (config_here.get("BREAKEVEN_R") or config_here.get("TRAIL_R")):
+            continue
         positions = mt5.positions_get(ticket=trade["position_id"]) if trade["position_id"] else None
         tick, info = mt5.symbol_info_tick(trade["symbol"]), mt5.symbol_info(trade["symbol"])
         if not positions or tick is None or info is None:
             continue
         position = positions[0]
         price = tick.bid if trade["side"] == "buy" else tick.ask  # the price it would close at now
-        new_stop = moved_stop(trade["side"], trade["entry"], trade["sl"], price, position.sl, config, info.digits)
+        new_stop = moved_stop(trade["side"], trade["entry"], trade["sl"], price, position.sl, config_here, info.digits)
         if new_stop is None or abs(price - new_stop) < (info.trade_stops_level or 0) * info.point:
             continue
         result = mt5.order_send({"action": mt5.TRADE_ACTION_SLTP, "position": position.ticket, "symbol": trade["symbol"],
@@ -393,6 +398,8 @@ def current_block(config, state, tick, symbol_info):
     spent = journal.spend(source="bot", since=start) if journal else 0.0
     traded = journal.trades_opened_since(start, "paper" if paper else "mt5") if journal else 0
     blocked = block_reason(state["paused"], open_count, pnl, spread_points, config, spent, traded)
+    if not blocked and (config.get("MAX_OPEN_TRADES") or config.get("MAX_PER_ASSET")):
+        blocked = portfolio_block(config, state, symbol_info)
     if not blocked:  # last: the calendar is a network read, once an hour at most
         currencies = (getattr(symbol_info, "currency_base", ""), getattr(symbol_info, "currency_profit", ""))
         blocked = news.blackout(currencies, config["NEWS_BLACKOUT_MINUTES"])
@@ -400,6 +407,29 @@ def current_block(config, state, tick, symbol_info):
             state["news_problem"] = news.cache["problem"]
             notify(config, news.cache["problem"])  # once per new problem: the owner should know the pause is off
     return blocked, spread_points
+
+
+def asset_of(symbol, info):
+    """What a market really trades, for MAX_PER_ASSET: every gold pair is XAU, every bitcoin pair BTC
+    (MT5's currency_base, for metals and crypto); forex pairs and stocks count one by one."""
+    base = getattr(info, "currency_base", "") if info is not None else ""
+    return base if base and market_kind(getattr(info, "path", "") or "") in ("Metal", "Crypto") else symbol
+
+
+def portfolio_block(config, state, symbol_info):
+    """Why the bot's trades over every market already reach MAX_OPEN_TRADES or MAX_PER_ASSET, or None."""
+    journal = state.get("journal")
+    symbols = [p.symbol for p in (mt5.positions_get() or ()) if p.magic == config["MAGIC"]]
+    if journal is not None and config["MODE"] == "dry":
+        symbols += [trade["symbol"] for trade in journal.open_trades("paper")]
+    if config.get("MAX_OPEN_TRADES") and len(symbols) >= config["MAX_OPEN_TRADES"]:
+        return f"{len(symbols)} trades already open, the most MAX_OPEN_TRADES allows"
+    if config.get("MAX_PER_ASSET"):
+        asset = asset_of(config["SYMBOL"], symbol_info)
+        same = [s for s in symbols if asset_of(s, symbol_info if s == config["SYMBOL"] else mt5.symbol_info(s)) == asset]
+        if len(same) >= config["MAX_PER_ASSET"]:
+            return f"already {len(same)} open on {asset} ({', '.join(sorted(set(same)))}), the most MAX_PER_ASSET allows"
+    return None
 
 
 def open_trade(config, state, side, reason, closed_candles, tick, symbol_info, spread_points, decided_by):
@@ -488,8 +518,8 @@ def run_agent_on(config, state, journal, paper, agent, frame, market):
         return
     closed = to_candles(rates[:-1])  # the last row is still forming
     candle = closed[-1]
-    market_config = dict(config, SYMBOL=market, TIMEFRAME=agent["timeframe"],
-                         CONTRACT_SIZE=getattr(symbol_info, "trade_contract_size", 0) or config["CONTRACT_SIZE"])
+    market_config = agents.with_risk(dict(config, SYMBOL=market, TIMEFRAME=agent["timeframe"],
+                                          CONTRACT_SIZE=getattr(symbol_info, "trade_contract_size", 0) or config["CONTRACT_SIZE"]), agent)
     settle_key = (market, agent["timeframe"])
     if paper and state["settle_seen"].get(settle_key) not in (None, candle["time"]):
         settle_paper(market_config, state, candle, symbol_info)  # this market's paper trades, once per new candle

@@ -21,6 +21,7 @@ import strategies
 from config import APP_DIR
 
 AGENTS_PATH = APP_DIR / "agents.json"
+RISK_KEYS = ("LOT", "RISK_PERCENT", "SL_ATR", "TP_ATR", "SL_POINTS", "TP_POINTS", "BREAKEVEN_R", "TRAIL_R")  # an agent's own
 BRAKE_LOSSES = 4  # default: an Auto-trade agent goes back to Watch only after this many losses in a row
 MODES = ("watch", "suggest", "auto")
 RUNS = ("candle", "timer")
@@ -87,6 +88,7 @@ def clean(raw):
         "analyst": raw.get("analyst", "rules" if template else "saved"),
         "created_at": int(raw.get("created_at") or time.time()),
         "brake_losses": int(raw.get("brake_losses", BRAKE_LOSSES) or 0),
+        "risk": {},
     }
     problems = []
     if not name:
@@ -103,6 +105,17 @@ def clean(raw):
         problems.append("pick a timeframe")
     if agent["runs"] not in RUNS or not 1 <= agent["every_minutes"] <= 1440:
         problems.append("runs: every closed candle, or every 1 to 1440 minutes")
+    for key, value in (raw.get("risk") or {}).items():  # blank fields stay with Settings
+        if key not in RISK_KEYS or str(value).strip() == "":
+            continue
+        try:
+            number = float(value)
+        except ValueError:
+            problems.append(f"{key} must be a number")
+            continue
+        if number < 0 or (key == "LOT" and number == 0):
+            problems.append(f"{key} must be above 0" if key == "LOT" else f"{key} cannot be negative")
+        agent["risk"][key] = int(number) if key.endswith("_POINTS") else number
     if not 0 <= agent["brake_losses"] <= 20:
         problems.append("pause after 0 (never) to 20 losses in a row")
     if not 0 <= agent["min_confidence"] <= 100:
@@ -177,6 +190,11 @@ def rsi_ranges(text):
         for side in sides:
             ranges[side] = ranges[side] or band
     return ranges
+
+
+def with_risk(config, agent):
+    """The bot's config with the agent's own size and stops on top (agent["risk"]); Settings for the rest."""
+    return dict(config, **(agent or {}).get("risk", {}))
 
 
 def ai_config(agent, config):

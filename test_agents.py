@@ -123,6 +123,35 @@ class BotHandsClosedTradesToTheirAgentTest(unittest.TestCase):
         self.assertTrue(notices[0].endswith("\nAgent Gold dip paused."))
 
 
+class OwnRiskTest(unittest.TestCase):
+    def test_own_size_and_stops_override_settings_only_where_set(self):
+        agent = agents.clean(dict(GOOD, risk={"LOT": "0.05", "SL_POINTS": "300", "TRAIL_R": "", "NOPE": 1}))
+        self.assertEqual(agent["risk"], {"LOT": 0.05, "SL_POINTS": 300})  # blank and unknown keys dropped
+        config = agents.with_risk(CONFIG, agent)
+        self.assertEqual((config["LOT"], config["SL_POINTS"], config["TP_POINTS"]), (0.05, 300, CONFIG["TP_POINTS"]))
+        self.assertIs(agents.with_risk(CONFIG, None)["LOT"], CONFIG["LOT"])
+        for bad, words in (({"LOT": 0}, "LOT must be above 0"), ({"SL_POINTS": -1}, "cannot be negative"), ({"TP_ATR": "x"}, "must be a number")):
+            with self.assertRaisesRegex(ValueError, words):
+                agents.clean(dict(GOOD, risk=bad))
+
+    def test_an_agents_trades_use_its_own_lot(self):
+        journal = Journal()
+        agent = agents.clean(dict(GOOD, markets=["XAUUSD"], mode="auto", risk={"LOT": 0.07}))
+        state = {"paused": False, "journal": journal, "run": "t", "agent_seen": {}, "settle_seen": {}}
+        with mock.patch.object(bot.agents, "load", return_value=[agent]), \
+                mock.patch.object(bot.mt5, "symbol_select", create=True), \
+                mock.patch.object(bot.mt5, "symbol_info", return_value=GOLD), \
+                mock.patch.object(bot.mt5, "symbol_info_tick", return_value=TICK), \
+                mock.patch.object(bot.mt5, "positions_get", return_value=()), \
+                mock.patch.object(bot.mt5, "history_deals_get", return_value=()), \
+                mock.patch("builtins.print"), mock.patch.object(bot, "notify"):
+            for shift in (0, 1):
+                with mock.patch.object(bot.mt5, "copy_rates_from_pos", return_value=candles(CROSS_UP, shift=shift)):
+                    bot.run_agents(dict(CONFIG, MODE="dry"), state)
+        (trade,) = journal.open_trades("paper")
+        self.assertEqual(trade["lot"], 0.07)  # not Settings' 0.01
+
+
 class MigrateTest(unittest.TestCase):
     def test_armed_strategies_become_auto_agents_once(self):
         with tempfile.TemporaryDirectory() as folder:

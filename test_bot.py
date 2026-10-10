@@ -158,6 +158,43 @@ class StopsAndSizeTest(unittest.TestCase):
                          (bot.mt5.TRADE_ACTION_SLTP, 42, 2650.5, 2660.5))
         self.assertEqual(notices, ["buy XAUUSD: stop moved to 2650.5, the trade can no longer lose"])
 
+    def test_an_agents_own_break_even_applies_to_its_trades_only(self):
+        journal = Journal()
+        agent = {"id": "a1", "risk": {"BREAKEVEN_R": 1.0}}
+        for ticket, brain in ((42, "agent:a1"), (43, "rules")):
+            journal.open_trade("mt5", "r", "XAUUSD", {"side": "buy", "lot": 0.01, "entry": 2650.5, "sl": 2645.5, "tp": 2660.5,
+                                                     "opened_at": TICK.time}, position_id=ticket, brain=brain)
+        with mock.patch.object(bot.agents, "load", return_value=[agent]), \
+                mock.patch.object(bot.mt5, "positions_get", side_effect=lambda ticket: (SimpleNamespace(ticket=ticket, sl=2645.5, tp=2660.5),)), \
+                mock.patch.object(bot.mt5, "symbol_info_tick", return_value=SimpleNamespace(bid=2656.0, ask=2656.3)), \
+                mock.patch.object(bot.mt5, "symbol_info", return_value=SimpleNamespace(digits=2, point=0.01, trade_stops_level=10)), \
+                mock.patch.object(bot.mt5, "order_send", return_value=SimpleNamespace(retcode=bot.mt5.TRADE_RETCODE_DONE)) as send, \
+                mock.patch.object(bot, "notify"):
+            bot.manage_stops(CONFIG, {"journal": journal})  # Settings: off
+        self.assertEqual([call.args[0]["position"] for call in send.call_args_list], [42])
+
+
+class PortfolioTest(unittest.TestCase):
+    def info(self, path, base):
+        return SimpleNamespace(path=path, currency_base=base)
+
+    def test_gold_pairs_are_one_asset_and_forex_pairs_are_not(self):
+        infos = {"GOLD": self.info(r"Derivatives\Spot Metals\GOLD", "XAU"), "XAUEUR": self.info(r"Derivatives\Spot Metals\XAUEUR", "XAU"),
+                 "EURUSD": self.info(r"Forex\Standard\Majors\EURUSD", "EUR"), "EURJPY": self.info(r"Forex\Standard\Minors\EURJPY", "EUR"),
+                 "Apple": self.info(r"Stocks\US\Apple", "USD"), "Tesla": self.info(r"Stocks\US\Tesla", "USD")}
+        self.assertEqual({s: bot.asset_of(s, i) for s, i in infos.items()},
+                         {"GOLD": "XAU", "XAUEUR": "XAU", "EURUSD": "EURUSD", "EURJPY": "EURJPY", "Apple": "Apple", "Tesla": "Tesla"})
+        open_now = [SimpleNamespace(symbol="GOLD", magic=7), SimpleNamespace(symbol="EURUSD", magic=7),
+                    SimpleNamespace(symbol="XAUJPY", magic=99)]  # someone else's (manual) trade: not counted
+        config = dict(CONFIG, MAX_PER_ASSET=1, MAX_OPEN_TRADES=0)
+        with mock.patch.object(bot.mt5, "positions_get", return_value=open_now), \
+                mock.patch.object(bot.mt5, "symbol_info", side_effect=lambda s: infos.get(s)):
+            blocked = bot.portfolio_block(dict(config, SYMBOL="XAUEUR"), {}, infos["XAUEUR"])
+            self.assertIn("already 1 open on XAU (GOLD)", blocked)
+            self.assertIsNone(bot.portfolio_block(dict(config, SYMBOL="EURJPY"), {}, infos["EURJPY"]))
+            self.assertIsNone(bot.portfolio_block(dict(config, SYMBOL="XAUEUR", MAX_PER_ASSET=2), {}, infos["XAUEUR"]))
+            self.assertIn("2 trades already open", bot.portfolio_block(dict(config, SYMBOL="Apple", MAX_OPEN_TRADES=2), {}, infos["Apple"]))
+
 
 class OrderTest(unittest.TestCase):
     def test_buy_uses_ask_with_sl_below_and_tp_above(self):

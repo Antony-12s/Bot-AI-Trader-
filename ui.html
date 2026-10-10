@@ -326,6 +326,8 @@ const FIELDS = [
   ]],
   ["Caps", "Daily limits", [
     ["MAX_DAILY_LOSS", "number", null, "Stop opening trades once today's realized loss reaches this"],
+    ["MAX_OPEN_TRADES", "number", null, "At most this many of the bot's trades open at once, over every market. 0 = no limit"],
+    ["MAX_PER_ASSET", "number", null, "At most this many open trades on one asset: GOLD, XAUEUR and XAUJPY all count as gold, every bitcoin pair as bitcoin; forex pairs and stocks one by one. 0 = no limit"],
     ["MAX_TRADES_PER_DAY", "number", null, "Stop opening trades after this many today. 0 = no limit"],
     ["AI_BUDGET_USD", "number", null, "Daily Claude spend cap; the bot holds once reached"],
   ]],
@@ -906,7 +908,7 @@ async function loadMyAgents() {
         <div class="rule">${esc(a.strategy || (PLAIN[a.template] || [])[2] || "")}</div>
         <div class="tags">${a.markets.slice(0, 4).map((m) => `<span>${esc(m)}</span>`).join("")}${a.markets.length > 4 ? `<span>+${a.markets.length - 4}</span>` : ""}
           <span>${esc(analystName(a.analyst))}</span><span>${a.totals.trades ? `won ${Math.round(a.totals.win_rate * 100)}% of ${a.totals.trades}` : "no trades yet"}</span>
-          <span>${a.brake_losses ? `pauses after ${a.brake_losses} losses in a row` : "never pauses"}</span>${a.analyst === "rules" ? "" : "<span>learns from its trades</span>"}</div>
+          <span>${a.brake_losses ? `pauses after ${a.brake_losses} losses in a row` : "never pauses"}</span>${Object.keys(a.risk || {}).length ? "<span>own size and stops</span>" : ""}${a.analyst === "rules" ? "" : "<span>learns from its trades</span>"}</div>
         <div class="latest">${(a.latest || []).map((l) => `<div class="sub"><b style="color: var(--text)">${esc(l.market)}</b> · ${when(l.at)} · <b class="${esc(l.action)}">${esc(l.action)}</b> ${esc((l.reason || "").split(" · ").slice(2).join(" · "))}</div>`).join("")
           || `<div class="sub">No checks yet: it decides each time a ${esc(a.timeframe)} candle closes, while the bot runs.</div>`}</div>
         <div class="seg" style="margin-top: 12px">${MODES.map(([id, label]) => `<button type="button" data-setmode="${id}" class="${a.mode === id ? "on" : ""}">${label}</button>`).join("")}</div>
@@ -980,6 +982,11 @@ const stepWhat = () => `
   <div class="field"><label>Markets (<span id="mcount">${draft.markets.length}</span> selected)</label>
     <input id="msearch" placeholder="Search markets, e.g. GOLD, EURUSD" value="${esc(marketQuery)}"><div class="chips" id="mchips">Loading the broker's markets…</div></div>`;
 
+// An agent may size and stop its own orders; a blank field keeps the value in Settings (agents.RISK_KEYS).
+const AGENT_RISK = [["LOT", "Lot", "Fixed size, unless risk % is set"], ["RISK_PERCENT", "Risk % per trade", "Size so the stop loses this % of the balance"],
+  ["SL_ATR", "Stop loss (ATRs)", "With take profit in ATRs; 0 = use points"], ["TP_ATR", "Take profit (ATRs)", ""],
+  ["SL_POINTS", "Stop loss (points)", "When the ATR fields are 0"], ["TP_POINTS", "Take profit (points)", ""],
+  ["BREAKEVEN_R", "Break-even at (R)", "Stop to the entry after this many stop distances in favour"], ["TRAIL_R", "Trail (R)", "Stop this many stop distances behind the price"]];
 const stepCareful = () => `
   <div class="fields" style="max-width: 760px">
     <div class="field"><label>Timeframe</label><select data-f="timeframe">${["M1", "M5", "M15", "M30", "H1", "H4", "D1"].map((t) => `<option ${t === draft.timeframe ? "selected" : ""}>${t}</option>`).join("")}</select></div>
@@ -990,6 +997,11 @@ const stepCareful = () => `
       <small>0 to 100. A call less sure than this becomes a hold.</small></div>
     <div class="field"><label>Pause after losses in a row</label><input data-f="brake_losses" type="number" min="0" max="20" value="${draft.brake_losses ?? 4}">
       <small>On Auto-trade, this many losing trades in a row switch it to Watch only and tell you. 0 = never.</small></div></div>
+  <details style="margin-top: 14px" ${Object.keys(draft.risk || {}).length ? "open" : ""}><summary>Its own size and stops (blank = the value in Settings)</summary>
+    <div class="fields" style="max-width: 760px">${AGENT_RISK.map(([key, label, hint]) => `<div class="field"><label>${label}</label>
+      <input data-risk="${key}" type="number" step="any" min="0" value="${esc((draft.risk || {})[key] ?? "")}" placeholder="Settings: ${esc($(key)?.value ?? "")}">
+      <small>${hint}</small></div>`).join("")}</div>
+    <div class="sub">Used for this agent's orders and its past-prices tests. Test both ways before trusting either.</div></details>
   ${draft.analyst === "rules" ? "" : `<div class="sub" style="margin-top: 12px">Learns as it goes: after each of its trades closes, the AI writes one lesson, and it reads its own record and latest lessons before its next calls (one more AI call per closed trade). It can learn the wrong thing from a few lucky or unlucky trades; the pause above is the safety net.</div>`}`;
 
 const stepMayDo = () => `<div class="field"><label>What it may do</label><div class="modecards">${MODES.map(([id, label, text]) =>
@@ -1049,6 +1061,11 @@ $("agentsview").addEventListener("input", (event) => {
   const field = event.target.dataset.f;
   if (field) draft[field] = event.target.type === "number" ? +event.target.value : event.target.value;
   if (field === "strategy" || field === "every_minutes") showUnderstood();
+  const riskKey = event.target.dataset.risk;
+  if (riskKey) {  // blank removes the override
+    draft.risk = { ...(draft.risk || {}) };
+    if (event.target.value === "") delete draft.risk[riskKey]; else draft.risk[riskKey] = +event.target.value;
+  }
   if (event.target.id === "msearch") { marketQuery = event.target.value; loadMarkets(); }
 });
 $("agentsview").addEventListener("change", (event) => {

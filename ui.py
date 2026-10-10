@@ -280,8 +280,8 @@ def _run_on(agent, bars, digits, contract, config):
     """The agent's paper trades over these candles (replay.py with the agent's analyst)."""
     import agents
     import replay
-    market_config = dict(config, SYMBOL=bars["market"], TIMEFRAME=agent["timeframe"], BRAIN="rules",
-                         CONTRACT_SIZE=contract or config["CONTRACT_SIZE"])
+    market_config = agents.with_risk(dict(config, SYMBOL=bars["market"], TIMEFRAME=agent["timeframe"], BRAIN="rules",
+                                          CONTRACT_SIZE=contract or config["CONTRACT_SIZE"]), agent)
     journal = Journal()
     try:
         replay.replay(bars["bars"], market_config, journal, "test", digits, log=lambda line: None,
