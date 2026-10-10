@@ -179,6 +179,7 @@ code { background: var(--bg); padding: 1px 6px; border-radius: 6px; color: var(-
 .state::before { content: "●"; margin-right: 6px; }
 .state.running { color: var(--win); }
 .state.stopping { color: var(--accent); }
+.state.closed { color: var(--muted); font-weight: 600; }
 .go { background: var(--accent); color: #1a0d00; border: 0; border-radius: 12px; padding: 10px 22px; font: inherit; font-weight: 800; cursor: pointer; }
 .go.stop { background: none; color: var(--loss); border: 1px solid #5f1e1e; }
 .go:disabled { opacity: .5; cursor: default; }
@@ -221,6 +222,7 @@ tr.detail td { white-space: normal; color: var(--muted); background: var(--panel
       <div class="seg modes" id="modes"><button data-mode="demo">Demo</button><button data-mode="live">Live</button></div>
       <button class="mt5btn" id="mt5btn" title="Open MetaTrader 5">MT5 · checking</button>
       <div class="balance" id="balance"></div>
+      <span class="state closed" id="closed" hidden></span>
       <span class="state" id="state">checking</span>
       <button class="go" id="go" disabled>Start</button>
     </div>
@@ -416,7 +418,28 @@ $("modes").addEventListener("click", async (event) => {
   } catch (error) { alert(error.message); }
 });
 
+// Forex, metals and index CFDs close from Friday 17:00 to Sunday 17:00 New York time (DST included); crypto trades on.
+// Returns when they reopen, or null while they are open.
+function weekendReopen(now = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short",
+    hour: "numeric", minute: "numeric", hourCycle: "h23" }).formatToParts(now).map((part) => [part.type, part.value]));
+  const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday), minute = +parts.hour * 60 + +parts.minute;
+  const OPEN = 17 * 60;
+  if (!(day === 6 || (day === 5 && minute >= OPEN) || (day === 0 && minute < OPEN))) return null;
+  return new Date(now.getTime() + (((7 - day) % 7) * 1440 + OPEN - minute) * 60000);
+}
+
+function showMarketHours() {
+  const reopen = weekendReopen();
+  $("closed").hidden = !reopen;
+  if (!reopen) return;
+  $("closed").textContent = `Market closed · opens ${reopen.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}`;
+  $("closed").title = "Weekend: forex, gold and index markets do not trade, so agents on them have no new candles to check. "
+    + "They carry on by themselves when the markets open. Crypto markets trade all weekend.";
+}
+
 async function loadBot() {
+  showMarketHours();
   const bot = await api("/api/bot");
   const state = bot.stopping ? "stopping" : bot.running ? "running" : "stopped";
   $("state").textContent = state === "running" ? "Running" : state === "stopping" ? "Stopping…" : "Stopped";

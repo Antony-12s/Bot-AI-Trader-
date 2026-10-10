@@ -199,6 +199,33 @@ class ChartTest(unittest.TestCase):
         self.assertIn("Apache License", ui.VENDOR.joinpath("lightweight-charts.LICENSE").read_text(encoding="utf-8"))
 
 
+class WeekendTest(unittest.TestCase):
+    """ui.html's weekendReopen, run in Node: the page's own code, not a Python copy of it."""
+
+    def test_markets_close_friday_to_sunday_5pm_new_york(self):
+        import re
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node.js not installed")
+        page = ui.PAGE.read_text(encoding="utf-8")
+        function = re.search(r"function weekendReopen\(.*?\n}\n", page, re.S).group(0)
+        cases = {  # UTC instant -> when it reopens (UTC), or null; New York is UTC-4 in October, UTC-5 in January
+            "2026-10-09T20:59:00Z": None,                      # Friday 16:59 New York: still open
+            "2026-10-09T21:00:00Z": "2026-10-11T21:00:00.000Z",  # Friday 17:00: closed until Sunday 17:00
+            "2026-10-10T06:38:00Z": "2026-10-11T21:00:00.000Z",  # Saturday (Thai lunchtime)
+            "2026-10-11T20:59:00Z": "2026-10-11T21:00:00.000Z",  # Sunday 16:59
+            "2026-10-11T21:00:00Z": None,                      # Sunday 17:00: open again
+            "2026-01-10T12:00:00Z": "2026-01-11T22:00:00.000Z",  # winter: Sunday 17:00 EST is 22:00 UTC
+            "2026-10-07T12:00:00Z": None,                      # a Wednesday
+        }
+        script = function + "".join(
+            f"console.log(String(weekendReopen(new Date({json.dumps(at)}))?.toISOString() ?? null));\n" for at in cases)
+        out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30).stdout.split()
+        self.assertEqual(out, [str(expected) if expected else "null" for expected in cases.values()])
+
+
 class MyAgentsTest(unittest.TestCase):
     def test_save_edit_mode_and_delete(self):
         with tempfile.TemporaryDirectory() as folder:
