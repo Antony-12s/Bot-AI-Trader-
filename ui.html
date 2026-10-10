@@ -1,0 +1,1271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeBot</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='2' y='2' width='60' height='60' rx='14' fill='%230e141f'/%3E%3Cg fill='%23ff8a1f'%3E%3Crect x='14' y='38' width='9' height='12' rx='2' opacity='.7'/%3E%3Crect x='27' y='27' width='9' height='16' rx='2'/%3E%3Crect x='41' y='15' width='9' height='20' rx='2'/%3E%3C/g%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #0b1019; --panel: #131a26; --panel2: #1a2230; --line: #232c3b;
+  --text: #e6e9ef; --muted: #8a93a6; --accent: #ff8a1f; --win: #22c55e; --loss: #ef4444;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 "Segoe UI", system-ui, sans-serif; display: flex; min-height: 100vh; }
+nav { width: 220px; background: #0e141f; border-right: 1px solid var(--line); padding: 20px 12px; display: flex; flex-direction: column; gap: 4px; }
+.brand { font-weight: 800; letter-spacing: .12em; margin: 0 8px 18px; }
+.brand b { color: var(--accent); }
+.brand img { vertical-align: -7px; margin-right: 10px; }
+.group { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .1em; margin: 14px 10px 4px; }
+nav a { color: var(--muted); text-decoration: none; padding: 9px 12px; border-radius: 10px; border-left: 3px solid transparent; }
+nav a.on { color: var(--accent); background: var(--panel); border-left-color: var(--accent); }
+main { flex: 1; padding: 22px 28px; min-width: 0; }
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
+h1 { margin: 0; font-size: 24px; }
+.sub { color: var(--muted); font-size: 13px; }
+.modes button { font-weight: 700; }
+.modes button.on[data-mode="demo"] { color: #60a5fa; background: #0f1d30; }
+.modes button.on[data-mode="live"] { color: var(--loss); background: #2a1010; }
+.counter { margin-top: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.counter b { font-size: 30px; }
+.meter { height: 8px; background: var(--bg); border-radius: 4px; margin-top: 8px; overflow: hidden; }
+.meter i { display: block; height: 100%; width: 0; background: var(--accent); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+.label { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.big { font-size: 34px; font-weight: 800; margin-top: 4px; }
+.win { color: var(--win); } .loss { color: var(--loss); }
+.row { display: flex; gap: 14px; flex-wrap: wrap; }
+.row > .card { flex: 1 1 340px; min-width: 0; }
+.chart-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--bg); border-radius: 10px; padding: 3px; }
+.seg button { background: none; border: 0; color: var(--muted); padding: 6px 14px; border-radius: 8px; cursor: pointer; font: inherit; }
+.seg button.on { background: var(--panel2); color: var(--accent); }
+svg { width: 100%; height: 240px; display: block; margin-top: 12px; }
+.feed { max-height: 330px; overflow: auto; display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.item { background: var(--panel2); border-radius: 10px; padding: 9px 12px; font-size: 13px; }
+.item b { margin-right: 6px; }
+.buy { color: var(--win); } .sell { color: var(--loss); } .hold { color: var(--muted); }
+.empty { color: var(--muted); padding: 30px 0; text-align: center; }
+form .card { margin-bottom: 14px; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 12px; }
+.field label { display: block; font-weight: 600; margin-bottom: 6px; }
+.field small { display: block; color: var(--muted); margin-top: 5px; font-size: 12px; }
+input, select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font: inherit; }
+input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
+.save { background: var(--accent); color: #1a0d00; border: 0; border-radius: 12px; padding: 11px 22px; font: inherit; font-weight: 700; cursor: pointer; }
+.msg { margin-left: 12px; font-size: 14px; }
+.three { display: grid; grid-template-columns: 260px 1fr 320px; gap: 14px; align-items: start; }
+.three.two { grid-template-columns: 300px minmax(0, 560px); }
+@media (max-width: 1100px) { .three, .three.two { grid-template-columns: 1fr; } }
+.list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.agent { background: var(--panel2); border: 1px solid transparent; border-radius: 12px; padding: 10px 12px; cursor: pointer; }
+.agent.on { border-color: var(--accent); background: #24170a; }
+.agent .sub::before { content: "●"; margin-right: 6px; color: var(--muted); }
+.agent.armed .sub::before { color: var(--win); }
+.agent-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.switch { width: 46px; height: 26px; border-radius: 13px; background: var(--line); border: 0; position: relative; cursor: pointer; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--text); transition: left .15s; }
+.switch.on { background: var(--win); }
+.switch.on::after { left: 23px; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.gcard { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; cursor: pointer; display: flex; flex-direction: column; }
+.gcard.on { border-color: var(--accent); }
+.gcard .agent-head b { font-size: 17px; }
+.rule { background: var(--bg); border-radius: 10px; padding: 12px 14px; font-size: 14px; line-height: 1.5; flex: 1; }
+.picky { display: flex; justify-content: space-between; align-items: baseline; margin-top: 14px; }
+.picky .label { color: var(--accent); }
+.bars { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 6px; }
+.bars i { height: 4px; border-radius: 2px; background: var(--line); }
+.bars i.lit { background: var(--accent); }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.tags span { background: var(--panel2); border-radius: 8px; padding: 3px 9px; font-size: 12px; color: var(--muted); }
+.mini { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
+.mini > div { background: var(--panel2); border-radius: 12px; padding: 12px; }
+.mini b { font-size: 22px; display: block; }
+.ladder { background: var(--panel2); border-radius: 12px; padding: 12px; }
+.ladder .meter { height: 10px; }
+.ladder .meter i { background: linear-gradient(90deg, var(--accent), var(--win)); }
+.copy { display: flex; gap: 8px; margin: 6px 0 4px; }
+.copy input { font-family: Consolas, monospace; font-size: 13px; }
+.ghost { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; font: inherit; cursor: pointer; white-space: nowrap; }
+details { background: var(--panel2); border-radius: 12px; padding: 12px; margin-top: 14px; }
+summary { cursor: pointer; font-weight: 600; }
+details ol { padding-left: 20px; color: var(--muted); }
+code { background: var(--bg); padding: 1px 6px; border-radius: 6px; color: var(--text); }
+.mt5btn { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.mt5btn::before { content: "●"; margin-right: 6px; color: var(--muted); }
+.mt5btn.linked::before { color: var(--win); }
+.mt5btn.partial::before { color: var(--accent); }
+.mt5btn.down::before { color: var(--loss); }
+.mt5btn:hover { border-color: var(--accent); }
+.slots { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.slot { background: var(--panel2); border: 1px solid transparent; border-radius: 12px; padding: 10px 12px; }
+.slot.on { border-color: var(--accent); }
+.slot b { display: block; margin-top: 6px; }
+.steps-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; background: #0e141f; border: 1px solid var(--line); border-radius: 14px; padding: 8px 10px; margin-bottom: 16px; }
+.steps-bar .st { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px; color: var(--muted); font-weight: 600; cursor: pointer; }
+.steps-bar .st i { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 12px; background: var(--panel2); }
+.steps-bar .st.done { color: var(--win); } .steps-bar .st.done i { background: #0f2a1a; }
+.steps-bar .st.now { color: var(--accent); background: #24170a; } .steps-bar .st.now i { background: var(--accent); color: #1a0d00; }
+.steps-bar .sep { width: 18px; height: 1px; background: var(--line); }
+.steps-bar .grow { flex: 1; }
+.blank { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--panel); border: 1px dashed var(--line); border-radius: 14px; padding: 14px 18px; margin-bottom: 14px; }
+.wiz textarea { width: 100%; min-height: 110px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: inherit; resize: vertical; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 220px; overflow: auto; margin-top: 8px; }
+.chips button { background: var(--panel2); color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.chips button.on { color: var(--accent); border-color: var(--accent); background: #24170a; }
+.pricegrid { display: grid; gap: 10px; height: calc(100vh - 230px); min-height: 420px; }
+.pricegrid.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.cpanel { padding: 6px; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.cbox { flex: 1; min-height: 0; }
+.chead { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 2px 2px 6px; }
+.chead input { width: 140px; padding: 5px 8px; }
+.chead .seg button { padding: 4px 7px; font-size: 12px; }
+@media (max-width: 800px) { .pricegrid.n4 { grid-template-columns: 1fr; grid-template-rows: none; height: auto; } .pricegrid.n4 .cpanel { height: 340px; } }
+.chips small { margin-left: 6px; font-size: 10px; padding: 1px 6px; border-radius: 6px; background: var(--bg); color: var(--muted); }
+.chips small.k-metal { color: #facc15; } .chips small.k-stock, .chips small.k-etf { color: #f87171; } .chips small.k-forex { color: #60a5fa; } .chips small.k-crypto { color: #c084fc; }
+.latest { margin-top: 10px; display: grid; gap: 4px; font-size: 12px; }
+.bt { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+.bt td, .bt th { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.modecards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.modecards button { text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 14px; font: inherit; cursor: pointer; }
+.modecards button.on { border-color: var(--accent); background: #24170a; }
+.modecards span { display: block; color: var(--muted); font-size: 13px; margin-top: 4px; }
+.wiznav { display: flex; justify-content: space-between; margin-top: 18px; max-width: 760px; }
+.wiz .field { max-width: 760px; margin-bottom: 14px; }
+.acard .agent-head b { font-size: 17px; }
+.airows { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+.airow { display: grid; grid-template-columns: 110px 1fr; gap: 6px 14px; align-items: center; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.airow small { grid-column: 2; color: var(--muted); font-size: 12px; }
+.airow .line, .airow .order { display: flex; gap: 8px; align-items: center; }
+.airow .line input { flex: 1; min-width: 0; }
+.airow .line select { flex: 0 0 230px; }
+.airow .order select { flex: 1; }
+.airow span { color: var(--muted); }
+.ownbox { display: flex; justify-content: space-between; align-items: center; gap: 12px; background: var(--panel2); border-radius: 12px; padding: 12px 14px; margin-bottom: 14px; }
+.balance { text-align: right; line-height: 1.1; }
+.balance b { font-size: 20px; }
+.balance span { display: block; font-size: 11px; font-weight: 800; letter-spacing: .1em; }
+.balance.demo span { color: #60a5fa; } .balance.real span { color: var(--loss); } .balance.real b { color: var(--win); }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.pill.demo { color: #60a5fa; background: #0f1d30; } .pill.real { color: var(--loss); background: #2a1010; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin-top: 12px; font-size: 14px; }
+.kv span { color: var(--muted); }
+.sym { background: var(--panel2); border-radius: 10px; padding: 9px 12px; cursor: pointer; }
+.sym.on { color: var(--accent); outline: 1px solid var(--accent); }
+.steps { display: flex; flex-direction: column; gap: 12px; max-width: 760px; }
+.step { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px 20px; }
+.step.now { border-color: var(--accent); }
+.step-head { display: flex; align-items: center; gap: 14px; }
+.step-head i { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-weight: 800; background: var(--panel2); color: var(--muted); flex: none; }
+.step.done .step-head i { background: #0f2a1a; color: var(--win); }
+.step.now .step-head i { background: var(--accent); color: #1a0d00; }
+.step-body { margin: 12px 0 0 44px; }
+.step-body .field { margin-bottom: 10px; max-width: 420px; }
+.picks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.settings-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.settings { display: grid; grid-template-columns: 240px 1fr; gap: 18px; align-items: start; }
+.subnav { display: flex; flex-direction: column; gap: 4px; }
+.subnav a { padding: 10px 12px; border-radius: 10px; border-left: 3px solid transparent; cursor: pointer; display: flex; flex-direction: column; }
+.subnav a span { color: var(--muted); font-size: 12px; }
+.subnav a.on { background: var(--panel); border-left-color: var(--accent); }
+.choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.choices button { flex: 1 1 44px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; font: inherit; cursor: pointer; }
+.choices button.on { color: var(--accent); border-color: var(--accent); background: #24170a; }
+@media (max-width: 860px) { .settings { grid-template-columns: 1fr; } .subnav { flex-direction: row; flex-wrap: wrap; } }
+.top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.state { font-size: 13px; font-weight: 700; color: var(--muted); }
+.state::before { content: "●"; margin-right: 6px; }
+.state.running { color: var(--win); }
+.state.stopping { color: var(--accent); }
+.state.closed { color: var(--muted); font-weight: 600; }
+.go { background: var(--accent); color: #1a0d00; border: 0; border-radius: 12px; padding: 10px 22px; font: inherit; font-weight: 800; cursor: pointer; }
+.go.stop { background: none; color: var(--loss); border: 1px solid #5f1e1e; }
+.go:disabled { opacity: .5; cursor: default; }
+pre { background: var(--bg); border-radius: 10px; padding: 12px; margin: 10px 0 0; max-height: 260px; overflow: auto; font: 12px/1.5 Consolas, monospace; color: var(--muted); white-space: pre-wrap; }
+.table { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; color: var(--muted); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+td { padding: 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+tr.trade { cursor: pointer; }
+tr.trade:hover td { background: var(--panel2); }
+tr.detail td { white-space: normal; color: var(--muted); background: var(--panel2); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) { body { flex-direction: column; } nav { width: auto; flex-direction: row; flex-wrap: wrap; } .group, .counter { display: none; } main { padding: 16px; } }
+</style>
+</head>
+<body>
+<nav>
+  <div class="brand"><img id="mark" alt="" width="26" height="26">TRADE<b>BOT</b></div>
+  <div class="group">• TRADE</div>
+  <a href="#dashboard" data-page="dashboard">Dashboard</a>
+  <a href="#price" data-page="price">Chart</a>
+  <a href="#history" data-page="history">History</a>
+  <a href="#signals" data-page="signals">Signals</a>
+  <div class="group">• AUTOMATION</div>
+  <a href="#myagents" data-page="myagents">AI Agents</a>
+  <div class="group">• BROKER</div>
+  <a href="#broker" data-page="broker">MetaTrader 5 <span id="navacct"></span></a>
+  <div class="group">• APP</div>
+  <a href="#settings" data-page="settings">Settings <span id="navsetup"></span></a>
+  <div class="counter">
+    <div class="label">Trades today</div>
+    <div><b id="tcount">0</b><span class="sub" id="tmax"></span></div>
+    <div class="meter"><i id="tbar"></i></div>
+  </div>
+</nav>
+<main>
+  <header>
+    <div><h1 id="title">Dashboard</h1><div class="sub" id="where"></div></div>
+    <div class="top">
+      <div class="seg modes" id="modes"><button data-mode="demo">Demo</button><button data-mode="live">Live</button></div>
+      <button class="mt5btn" id="mt5btn" title="Open MetaTrader 5">MT5 · checking</button>
+      <div class="balance" id="balance"></div>
+      <span class="state closed" id="closed" hidden></span>
+      <span class="state" id="state">checking</span>
+      <button class="go" id="go" disabled>Start</button>
+    </div>
+  </header>
+
+  <section id="dashboard">
+    <div class="cards">
+      <div class="card"><div class="label">Today</div><div class="big" id="today"></div><div class="sub">profit from trades closed today</div></div>
+      <div class="card"><div class="label">Win rate</div><div class="big" id="winrate"></div><div class="sub" id="wl"></div></div>
+      <div class="card"><div class="label">Open now</div><div class="big" id="open"></div><div class="sub">open trades right now</div></div>
+      <div class="card"><div class="label">AI cost</div><div class="big" id="spend"></div><div class="sub">paid to the AI so far</div></div>
+    </div>
+    <div class="row">
+      <div class="card">
+        <div class="chart-head">
+          <div><b>Profit over time</b> <span class="sub" id="stats"></span></div>
+          <div class="seg" id="range"><button data-days="1">24H</button><button data-days="7">7D</button><button data-days="30" class="on">30D</button><button data-days="3650">All</button></div>
+        </div>
+        <svg id="chart" viewBox="0 0 600 240" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="card" style="flex: 0 1 360px"><b>Recent decisions</b><div class="feed" id="feed"></div></div>
+    </div>
+    <div class="card" style="margin-top: 14px"><b>Bot log</b> <span class="sub">output of the bot started here, newest at the bottom</span><pre id="log">Nothing yet. Press Start.</pre></div>
+  </section>
+
+  <section id="price" hidden>
+    <div class="chart-head" style="margin: -8px 0 12px">
+      <div class="sub">Live candles from MetaTrader 5 (broker server time) with the bot's trades on them.</div>
+      <div class="seg" id="layout"><button data-n="1">1 chart</button><button data-n="4">4 charts</button></div>
+    </div>
+    <datalist id="chartsyms"></datalist>
+    <div class="pricegrid" id="pricegrid"></div>
+    <div class="sub" style="margin-top: 8px">▲ the bot bought · ▼ the bot sold · ● a trade closed, with its profit · lines: the open trade's entry, stop loss and take profit</div>
+  </section>
+
+  <section id="history" hidden>
+    <div class="card table">
+      <table>
+        <thead><tr><th>Closed</th><th>Side</th><th>Symbol</th><th class="num">Lot</th><th class="num">Entry</th><th class="num">Exit</th><th class="num">Profit</th><th>How it ended</th><th>Decided by</th><th>Account</th></tr></thead>
+        <tbody id="trades"></tbody>
+      </table>
+      <div class="sub" style="margin-top: 10px">Click a trade for the reason it was opened and the lesson the AI took from it. Newest 200.</div>
+    </div>
+  </section>
+
+  <section id="signals" hidden>
+    <div class="sub" style="margin: -8px 0 14px">Turn sources on and the bot trades what they deliver. Every signal still passes your risk limits, lot and stops.</div>
+    <div class="three">
+      <div class="card"><div class="label" style="color: var(--accent)">• Sources</div><div class="list" id="sourcelist"></div></div>
+      <div class="card" id="source"></div>
+      <div class="card">
+        <div class="chart-head"><div class="label">Signal history</div>
+          <div class="seg" id="sigfilter"><button data-f="all" class="on">All</button><button data-f="traded">Traded</button><button data-f="skipped">Skipped</button></div></div>
+        <div class="feed" id="sigfeed"></div>
+        <div class="sub" style="margin-top: 8px">Every outside signal is recorded, traded or not.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="myagents" hidden>
+    <div class="sub" style="margin: -8px 0 14px">Describe a strategy in plain English. The agent reads your broker's own candles and decides; you choose whether it may trade.</div>
+    <div id="agentsview"></div>
+  </section>
+
+
+  <section id="broker" hidden>
+    <div class="sub" style="margin: -8px 0 14px">The bot trades through this MT5 terminal and whatever account it is logged into.</div>
+    <div class="three two">
+      <div class="card" id="acct"></div>
+      <form class="card" id="loginform" autocomplete="off">
+        <b>Log in to a broker account</b>
+        <div class="sub" style="margin: 4px 0 12px">Sent straight to MT5, like its own login window. TradeBot never stores or shows your password.</div>
+        <div class="field"><label for="acctno">Account number</label><input id="acctno" name="login" inputmode="numeric" required></div>
+        <div class="field" style="margin-top: 12px"><label for="acctpw">Password</label><input id="acctpw" name="password" type="password" autocomplete="current-password" required></div>
+        <div class="field" style="margin-top: 12px"><label for="acctsrv">Server</label><input id="acctsrv" name="server" required>
+          <small>Exactly as MT5 lists it, e.g. XMGlobal-MT5 6. Use the trading password, not the investor one.</small></div>
+        <button class="save" type="submit" style="margin-top: 14px">Log in</button>
+        <div class="msg" id="loginmsg" style="margin: 10px 0 0"></div>
+      </form>
+    </div>
+  </section>
+
+  <section id="settings" hidden>
+    <div class="seg" id="settabs" style="margin: -8px 0 14px"><button data-tab="setup">Setup</button><button data-tab="form">Settings</button></div>
+    <div id="setup" hidden>
+      <div class="sub" style="margin-bottom: 14px">Five steps, once. Each turns green when it is done; you can change all of it later.</div>
+      <div class="steps" id="steps"></div>
+    </div>
+    <form id="form"></form>
+  </section>
+</main>
+<script>
+// [section, subtitle, [[key, kind, options, hint]]]; "choice" renders as buttons, like a segmented control.
+const FIELDS = [
+  ["Execution", "Mode, market, size", [
+    ["MODE", "choice", ["demo", "live"], "demo trades only a demo account (it refuses a real one). live trades any account, real money included."],
+    ["SYMBOL", "text", null, "Exactly as your broker names it (XAUUSD, XAUUSDm, GOLD ...)"],
+    ["TIMEFRAME", "choice", ["M1", "M5", "M15", "M30", "H1", "H4", "D1"], "Candle size the bot decides on"],
+    ["LOT", "number", null, "Size of every order"],
+  ]],
+  ["Caps", "Daily limits", [
+    ["MAX_DAILY_LOSS", "number", null, "Stop opening trades once today's realized loss reaches this"],
+    ["MAX_TRADES_PER_DAY", "number", null, "Stop opening trades after this many today. 0 = no limit"],
+    ["AI_BUDGET_USD", "number", null, "Daily Claude spend cap; the bot holds once reached"],
+  ]],
+  ["Safety", "Stop loss and take profit", [
+    ["SL_ATR", "number", null, "Stop loss in ATRs, widens when the market moves more. 0 = use SL_POINTS"],
+    ["TP_ATR", "number", null, "Take profit in ATRs. 0 = use TP_POINTS"],
+    ["ATR_PERIOD", "number", null, "Candles in the ATR"],
+    ["SL_POINTS", "number", null, "Fixed stop in points, used when SL_ATR is 0"],
+    ["TP_POINTS", "number", null, "Fixed target in points, used when TP_ATR is 0"],
+  ]],
+  ["Filters", "When not to trade", [
+    ["MAX_SPREAD_POINTS", "number", null, "Skip entries while the spread is wider than this"],
+    ["NEWS_BLACKOUT_MINUTES", "number", null, "No new trades this many minutes before and after high-impact news for the market's currencies (US jobs, Fed, CPI ...). 0 = off"],
+  ]],
+  ["Broker", "MT5 order details", [
+    ["CONTRACT_SIZE", "number", null, "Units per lot: 100 for gold, 100000 for most forex"],
+    ["FILLING", "choice", ["IOC", "FOK", "RETURN"], "Change it if orders fail with Unsupported filling mode"],
+    ["MAGIC", "number", null, "Tags this bot's orders so it only counts its own"],
+  ]],
+  ["App", "Start with Windows, start the bot", [
+    // RUN_AT_LOGIN is read-only here: the installer owns it (see desktop.py)
+    ["RUN_AT_LOGIN", "login", null, "To change it, run TradeBot-Setup.exe again and tick or untick \"Start TradeBot when Windows starts\". The installer sets it, not the app: Windows security treats a program that adds itself to startup as suspicious."],
+    ["AUTO_START_BOT", "choice", ["off", "on"], "on: the bot starts as soon as TradeBot opens, and restarts by itself if it stops unexpectedly. With start-with-Windows too, a reboot brings everything back."],
+  ]],
+  ["AI & Telegram", "Claude, GPT or Gemini; Telegram bot", [["AI_ROWS", "airows", null, ""]]],  // laid out by aiRows()
+];
+// [provider, label, key setting, model setting, where to get a key]
+const AI = [["claude", "Claude", "ANTHROPIC_API_KEY", "AI_MODEL_CLAUDE", "platform.claude.com"],
+            ["openai", "GPT", "OPENAI_API_KEY", "AI_MODEL_OPENAI", "platform.openai.com"],
+            ["gemini", "Gemini", "GEMINI_API_KEY", "AI_MODEL_GEMINI", "aistudio.google.com"]];
+
+// One row per thing: the order the AIs are tried in, then key → Test → model for each, then Telegram.
+function aiRows(settings) {
+  const order = settings.AI_PROVIDER.split(",").map((p) => p.trim()).filter(Boolean);
+  const pick = (i) => `<select class="ord" data-i="${i}">${i ? `<option value="">none</option>` : ""}
+    ${AI.map(([id, label]) => `<option value="${id}" ${order[i] === id ? "selected" : ""}>${label}</option>`).join("")}</select>`;
+  const secret = (key) => `placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"`;
+  return `<div class="airows">
+    <div class="airow"><b>AI order</b><div class="order">${pick(0)}<span>›</span>${pick(1)}<span>›</span>${pick(2)}</div>
+      <input type="hidden" id="AI_PROVIDER" name="AI_PROVIDER" value="${esc(order.join(","))}">
+      <input type="hidden" name="AI_MODEL" value=""><!-- the old single model setting: each row's own model replaces it -->
+      <small>The 1st answers every call. Only if it fails (down, key rejected) does the 2nd try, then the 3rd. Used by agents whose analyst is "Your AI order".</small></div>
+    ${AI.map(([id, label, key, model, site]) => `
+    <div class="airow"><b>${label}</b>
+      <div class="line"><input id="${key}" name="${key}" type="password" autocomplete="off" ${secret(key)}>
+        <button type="button" class="ghost" data-test="${id}">Test</button><span>›</span>
+        <select id="${model}" name="${model}"><option value="">Default</option>${settings[model] ? `<option selected>${esc(settings[model])}</option>` : ""}</select></div>
+      <small id="hint-${key}">Key from ${site}. Test it to list its models, then pick one.</small></div>`).join("")}
+    <div class="airow"><b>Telegram</b>
+      <div class="line"><input id="TELEGRAM_TOKEN" name="TELEGRAM_TOKEN" type="password" autocomplete="off" ${secret("TELEGRAM_TOKEN")}>
+        <input id="TELEGRAM_CHAT_ID" name="TELEGRAM_CHAT_ID" autocomplete="off" placeholder="chat id" value="${esc(settings.TELEGRAM_CHAT_ID)}">
+        <button type="button" class="ghost" data-tgtest="1">Test</button></div>
+      <small id="hint-TELEGRAM_TOKEN">Token from @BotFather, then your chat id. Test checks both without sending anything.</small></div>
+    <div><button class="save" type="submit">Save</button></div>
+  </div>`;
+}
+let section = 0;
+const $ = (id) => document.getElementById(id);
+$("mark").src = document.querySelector("link[rel=icon]").href;  // one copy of the logo
+const money = (n) => (n < 0 ? "-$" : n > 0 ? "+$" : "$") + Math.abs(n).toFixed(2);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const when = (t) => t ? new Date(t * 1000).toISOString().slice(5, 16).replace("T", " ") : "open";
+let mode = "demo";
+const tone = (el, n) => el.className = el.className.replace(/ ?(win|loss)/g, "") + (n > 0 ? " win" : n < 0 ? " loss" : "");
+let days = 30;
+
+async function api(path, body) {
+  const response = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error);
+  return data;
+}
+
+let maxTrades = 0, timeframeNow = "M15";
+function showMode(settings) {
+  mode = settings.MODE;
+  timeframeNow = settings.TIMEFRAME;
+  maxTrades = +settings.MAX_TRADES_PER_DAY || 0;
+  for (const button of $("modes").children) button.classList.toggle("on", button.dataset.mode === mode);
+  $("where").textContent = `${settings.SYMBOL} · ${settings.TIMEFRAME}` + (mode === "live" ? " · REAL MONEY" : "");
+}
+
+$("modes").addEventListener("click", async (event) => {
+  const next = event.target.dataset.mode;
+  if (!next || next === mode) return;
+  if (next === "live" && !confirm("Switch TradeBot's MetaTrader 5 to your Live account? The bot will trade real money there.")) return;
+  try {
+    // logs TradeBot's MT5 into that mode's own account (refused while the bot runs), then saves MODE
+    const settings = await api("/api/broker/mode", { mode: next });
+    showMode(settings); buildForm(settings); loadBroker().catch(() => {});
+  } catch (error) { alert(error.message); }
+});
+
+// Forex, metals and index CFDs close from Friday 17:00 to Sunday 17:00 New York time (DST included); crypto trades on.
+// Returns when they reopen, or null while they are open.
+function weekendReopen(now = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short",
+    hour: "numeric", minute: "numeric", hourCycle: "h23" }).formatToParts(now).map((part) => [part.type, part.value]));
+  const day = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday), minute = +parts.hour * 60 + +parts.minute;
+  const OPEN = 17 * 60;
+  if (!(day === 6 || (day === 5 && minute >= OPEN) || (day === 0 && minute < OPEN))) return null;
+  return new Date(now.getTime() + (((7 - day) % 7) * 1440 + OPEN - minute) * 60000);
+}
+
+function showMarketHours() {
+  const reopen = weekendReopen();
+  $("closed").hidden = !reopen;
+  if (!reopen) return;
+  $("closed").textContent = `Market closed · opens ${reopen.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}`;
+  $("closed").title = "Weekend: forex, gold and index markets do not trade, so agents on them have no new candles to check. "
+    + "They carry on by themselves when the markets open. Crypto markets trade all weekend.";
+}
+
+async function loadBot() {
+  showMarketHours();
+  const bot = await api("/api/bot");
+  const state = bot.stopping ? "stopping" : bot.running ? "running" : "stopped";
+  $("state").textContent = state === "running" ? "Running" : state === "stopping" ? "Stopping…" : "Stopped";
+  $("state").className = "state " + state;
+  $("go").textContent = bot.running ? "Stop" : "Start";
+  $("go").className = "go" + (bot.running ? " stop" : "");
+  $("go").disabled = bot.stopping;
+  if (bot.log.length) {
+    const log = $("log"), atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 4;
+    log.textContent = bot.log.join("\n");
+    if (atBottom) log.scrollTop = log.scrollHeight;
+  }
+}
+
+$("go").addEventListener("click", async () => {
+  const stopping = $("go").textContent === "Stop";
+  if (!stopping && mode === "live" && !confirm("MODE is live: the bot will send real-money orders. Start it?")) return;
+  $("go").disabled = true;
+  try { await api(stopping ? "/api/bot/stop" : "/api/bot/start", {}); }
+  catch (error) { alert(error.message); }
+  await loadBot();
+});
+
+async function loadHistory() {
+  const trades = await api("/api/history");
+  $("trades").innerHTML = trades.length ? trades.map((t) => `
+    <tr class="trade" data-id="${t.id}"><td>${when(t.closed_at)}</td><td class="${esc(t.side)}">${esc(t.side).toUpperCase()}</td><td>${esc(t.symbol)}</td>
+    <td class="num">${t.lot}</td><td class="num">${t.entry}</td><td class="num">${t.exit ?? "—"}</td>
+    <td class="num ${t.profit > 0 ? "win" : t.profit < 0 ? "loss" : ""}">${t.profit == null ? "—" : money(t.profit)}</td>
+    <td>${esc(t.outcome ? OUTCOME[t.outcome] || t.outcome : "Still open")}</td><td>${esc(WHO[t.brain] || t.brain || "—")}</td><td>${esc(WHO[t.source] || t.source)}</td></tr>
+    <tr class="detail" data-for="${t.id}" hidden><td colspan="10"><b>Why it opened:</b> ${esc(plainReason(t.reason) || "—")}${t.lesson ? `<br><b>What the AI learned:</b> ${esc(t.lesson)}` : ""}</td></tr>`).join("")
+    : `<tr><td colspan="10" class="empty">No trades yet</td></tr>`;
+}
+
+$("trades").addEventListener("click", (event) => {
+  const row = event.target.closest("tr.trade");
+  if (row) { const detail = $("trades").querySelector(`tr[data-for="${row.dataset.id}"]`); detail.hidden = !detail.hidden; }
+});
+
+function drawChart(points) {
+  const svg = $("chart");
+  if (!points.length) { svg.innerHTML = `<text x="300" y="120" fill="#8a93a6" text-anchor="middle" font-size="14">No closed trades in this range</text>`; return; }
+  const values = [0, ...points.map((p) => p[1])];
+  const low = Math.min(...values), high = Math.max(...values), span = high - low || 1;
+  const x = (i) => (i / Math.max(values.length - 1, 1)) * 600;
+  const y = (v) => 225 - ((v - low) / span) * 210;
+  const line = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  svg.innerHTML = `
+    <defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8a1f" stop-opacity=".35"/><stop offset="1" stop-color="#ff8a1f" stop-opacity="0"/></linearGradient></defs>
+    <line x1="0" x2="600" y1="${y(0)}" y2="${y(0)}" stroke="#232c3b" stroke-dasharray="4 4"/>
+    <polygon points="0,240 ${line} 600,240" fill="url(#fill)"/>
+    <polyline points="${line}" fill="none" stroke="#ff8a1f" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
+}
+
+async function loadDashboard() {
+  const data = await api(`/api/dashboard?days=${days}`);
+  const t = data.totals;
+  $("today").textContent = money(data.today); tone($("today"), data.today);
+  $("winrate").textContent = t.trades ? Math.round(t.win_rate * 100) + "%" : "—";
+  $("wl").innerHTML = `<span class="win">${t.wins}W</span> / <span class="loss">${t.losses}L</span>`;
+  $("open").textContent = data.open;
+  $("tcount").textContent = data.trades_today;
+  $("tmax").textContent = maxTrades ? ` / ${maxTrades}` : " · no daily limit";
+  $("tbar").style.width = maxTrades ? Math.min(100, data.trades_today / maxTrades * 100) + "%" : "0";
+  $("spend").textContent = "$" + data.ai_spend.toFixed(2);
+  $("stats").textContent = t.trades ? `total ${money(t.net)} · biggest drop from a high $${t.max_drawdown.toFixed(2)} · ${t.trades} trades` : "";
+  drawChart(data.equity);
+  $("feed").innerHTML = feedHtml(data.decisions);
+}
+
+// Every section stays in the form (hidden ones too), so Save always sends all of them.
+function buildForm(settings) {
+  $("form").innerHTML = `
+    <div class="settings-head"><span class="sub">Saved to .env. The bot reads it at start: Stop and Start after saving.</span>
+      <span><span class="msg" id="msg"></span><button class="save" type="submit">Save settings</button></span></div>
+    <div class="settings">
+      <div class="subnav">${FIELDS.map(([name, sub], i) => `<a data-section="${i}" class="${i === section ? "on" : ""}"><b>${name}</b><span>${sub}</span></a>`).join("")}</div>
+      <div>${FIELDS.map(([name, , fields], i) => `
+        <div class="card" data-panel="${i}" ${i === section ? "" : "hidden"}><b>${name}</b>${fields[0][1] === "airows" ? aiRows(settings) : `<div class="fields">${fields.map(([key, kind, options, hint]) => `
+          <div class="field"><label for="${key}">${key}</label>
+          ${kind === "choice"
+            ? `<input type="hidden" id="${key}" name="${key}"><div class="choices" data-for="${key}">${options.map((o) => `<button type="button" data-value="${o}">${o}</button>`).join("")}</div>`
+            : kind === "login"
+            ? `<div class="big" style="font-size: 18px" id="runlogin">…</div>`
+            : kind === "model"
+            ? `<select id="${key}" name="${key}"><option value="">Default</option>${settings[key] ? `<option>${esc(settings[key])}</option>` : ""}</select>`
+            : kind === "aikey"
+            ? `<div class="copy" style="margin: 0"><input id="${key}" name="${key}" type="password" autocomplete="off"
+                placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"><button type="button" class="ghost" data-test="${options}">Test</button></div>`
+            : `<input id="${key}" name="${key}" type="${kind}" ${kind === "number" ? 'step="any"' : ""} autocomplete="off"
+                ${kind === "password" ? `placeholder="${settings[key] ? "stored, leave blank to keep" : "not set"}"` : ""}>`}
+          <small id="hint-${key}">${hint}</small></div>`).join("")}</div>`}</div>`).join("")}</div>
+    </div>`;
+  for (const [, , fields] of FIELDS) for (const [key, kind] of fields) if (!["password", "aikey", "login", "airows"].includes(kind)) choose(key, settings[key]);
+  api("/api/app").then((app) => {
+    $("runlogin").textContent = app.run_at_login ? "On: opens in the tray at login" : "Off";
+    $("runlogin").className = "big " + (app.run_at_login ? "win" : "");
+  }).catch(() => {});
+}
+
+// Test a key: list the models it can use, then let the user pick one from the drop-down.
+async function testKey(provider, button) {
+  const [, , keyField, modelField] = AI.find(([id]) => id === provider);
+  const hint = $("hint-" + keyField);
+  button.disabled = true; button.textContent = "Testing…";
+  try {
+    const result = await api("/api/ai/test", { provider, key: $(keyField).value });
+    hint.innerHTML = `<span class="win">✓ Key works.</span> ${result.models.length} models: pick one, then Save. The spend estimate knows prices for the default only.`;
+    const keep = $(modelField).value;
+    $(modelField).innerHTML = `<option value="">Default (${esc(result.default)})</option>` +
+      result.models.map((m) => `<option ${m === keep ? "selected" : ""}>${esc(m)}</option>`).join("");
+  } catch (error) {
+    hint.innerHTML = `<span class="loss">✗ ${esc(error.message)}</span>`;
+  }
+  button.disabled = false; button.textContent = "Test";
+}
+
+async function testTelegram(button) {
+  const hint = $("hint-TELEGRAM_TOKEN");
+  button.disabled = true; button.textContent = "Testing…";
+  try {
+    const result = await api("/api/telegram/test", { token: $("TELEGRAM_TOKEN").value, chat_id: $("TELEGRAM_CHAT_ID").value });
+    hint.innerHTML = `<span class="win">✓ Bot ${esc(result.bot)} works${result.chat ? `, and it can reach ${esc(result.chat)}` : ""}.</span>`
+      + (result.chat ? " Save to keep it." : " Add your chat id and test again.");
+  } catch (error) {
+    hint.innerHTML = `<span class="loss">✗ ${esc(error.message)}</span>`;
+  }
+  button.disabled = false; button.textContent = "Test";
+}
+
+function choose(key, value) {
+  $(key).value = value;
+  const choices = document.querySelector(`.choices[data-for="${key}"]`);
+  if (choices) for (const button of choices.children) button.classList.toggle("on", button.dataset.value === value);
+}
+
+$("form").addEventListener("change", (event) => {
+  if (!event.target.classList.contains("ord")) return;
+  // 1st > 2nd > 3rd into AI_PROVIDER, skipping "none" and repeats
+  const picked = [...document.querySelectorAll(".ord")].map((s) => s.value).filter(Boolean);
+  $("AI_PROVIDER").value = [...new Set(picked)].join(",");
+});
+
+$("form").addEventListener("click", async (event) => {
+  if (event.target.dataset.test) return testKey(event.target.dataset.test, event.target);
+  if (event.target.dataset.tgtest) return testTelegram(event.target);
+  const option = event.target.closest(".choices button");
+  if (option) return choose(option.parentElement.dataset.for, option.dataset.value);
+  const link = event.target.closest(".subnav a");
+  if (!link) return;
+  section = +link.dataset.section;
+  for (const a of document.querySelectorAll(".subnav a")) a.classList.toggle("on", a === link);
+  for (const panel of document.querySelectorAll("[data-panel]")) panel.hidden = +panel.dataset.panel !== section;
+});
+
+$("form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const changes = Object.fromEntries(new FormData($("form")));
+  if (changes.MODE === "live" && !confirm("MODE=live sends orders on any account, real money included. Save anyway?")) return;
+  document.querySelector(".save").disabled = true;
+  try {
+    const settings = await api("/api/settings", changes);
+    buildForm(settings); showMode(settings); loadDashboard();
+    $("msg").textContent = "Saved."; $("msg").className = "msg win";
+  } catch (error) {
+    $("msg").textContent = error.message; $("msg").className = "msg loss";
+    document.querySelector(".save").disabled = false;
+  }
+});
+
+$("range").addEventListener("click", (event) => {
+  if (!event.target.dataset.days) return;
+  days = +event.target.dataset.days;
+  for (const button of $("range").children) button.classList.toggle("on", button === event.target);
+  loadDashboard();
+});
+
+const plainReason = (reason) => String(reason ?? "").replace(/^(\w+): /, (whole, name) => PLAIN[name] ? plainName(name) + ": " : whole);
+const feedHtml = (items) => items.length ? items.map((d) => `
+  <div class="item"><b class="${esc(d.action)}">${esc(d.action).toUpperCase()}</b><span class="sub">${when(d.at)} · ${esc(WHO[d.source] || d.source)}</span>
+  <div>${esc(plainReason(d.reason))}</div></div>`).join("") : `<div class="empty">No decisions yet</div>`;
+// Journal codes in words people use.
+const WHO = { bot: "bot", replay: "past-price test", paper: "Paper", mt5: "Real or demo", rules: "Strategy", ai: "AI", hybrid: "Strategy + AI", webhook: "TradingView", telegram: "Telegram" };
+const OUTCOME = { sl: "Stop loss", tp: "Take profit", closed: "Closed by hand" };
+
+// Plain-English name, idea, exact rule and how many conditions must all agree: strategies.PLAIN, loaded at start.
+let PLAIN = {};
+const PICKY = ["", "trades most often", "trades often", "picky", "picky", "very picky", "very picky"];
+const pickyBars = (n) => [1, 2, 4, 6].map((step) => `<i class="${n >= step ? "lit" : ""}"></i>`).join("");
+const plainName = (name) => (PLAIN[name] || [name])[0];
+
+let sig = null, pickedSource = "webhook", sigFilter = "all";
+async function loadSignals() {
+  sig = await api("/api/signals");
+  const sources = [
+    ["agents", "AI agents", `${sig.agents.auto} of ${sig.agents.total} auto-trading`, sig.agents.auto > 0],
+    ["webhook", "TradingView", sig.webhook.on ? "on · alerts via webhook" : "off · alerts from your charts", sig.webhook.on],
+    ["telegram", "Telegram", sig.telegram.ready ? (sig.telegram.on ? "on · /buy and /sell" : "off · /buy and /sell") : "needs a Telegram bot first", sig.telegram.on],
+  ];
+  $("sourcelist").innerHTML = sources.map(([id, name, sub, on]) => `
+    <div class="agent ${on ? "armed" : ""} ${id === pickedSource ? "on" : ""}" data-source="${id}"><b>${name}</b><div class="sub">${esc(sub)}</div></div>`).join("");
+  $("source").innerHTML = pickedSource === "agents" ? `
+      <b style="font-size: 20px">AI agents</b>
+      <div class="sub" style="margin: 8px 0 14px">Your agents decide on every closed candle of their markets. ${sig.agents.auto} of ${sig.agents.total} may trade (Auto-trade); the others only watch or suggest.</div>
+      <a class="ghost" href="#myagents" style="text-decoration: none">Open AI agents</a>`
+    : pickedSource === "webhook" ? `
+      <div class="agent-head"><div><b style="font-size: 20px">TradingView</b><div class="sub">Any TradingView alert becomes a trade signal</div></div>
+        <button class="switch ${sig.webhook.on ? "on" : ""}" data-switch="webhook"></button></div>
+      ${sig.webhook.url ? `
+        <div class="label" style="margin-top: 16px">Webhook URL</div>
+        <div class="copy"><input readonly value="${esc(sig.webhook.url)}" id="hookurl"><button class="ghost" data-act="copy">Copy</button></div>
+        <div class="sub">The URL is the key: anyone who has it can send signals. Keep it private.</div>
+        <div class="copy" style="margin-top: 12px"><button class="ghost" data-act="ping">Send test ping</button><button class="ghost" data-act="rotate">New URL</button></div>
+        <div class="sub" id="pingmsg"></div>` : `<div class="sub" style="margin-top: 16px">Turn it on to get your private webhook URL.</div>`}
+      <details><summary>Setup guide: TradingView</summary><ol>
+        <li>Turn this source on and copy the webhook URL.</li>
+        <li>In TradingView, create an alert on the chart of the market this bot trades.</li>
+        <li>Notifications: tick <b>Webhook URL</b> and paste the URL.</li>
+        <li>Message: <code>buy</code> or <code>sell</code>. For strategy alerts use <code>{{strategy.market_position}}</code>: it says long, short or flat, and flat (an exit) is never traded.</li>
+        <li>Start the bot. Alerts that reach it more than a minute late (bot stopped, MT5 down) are skipped, never traded late. Exits like "close long" are skipped too: the bot's own stop loss and take profit close its trades.</li>
+      </ol><div class="sub">Alerts pass through ntfy.sh, a free public relay. They carry only the words buy or sell.</div></details>`
+    : `
+      <div class="agent-head"><div><b style="font-size: 20px">Telegram</b><div class="sub">Trade by sending /buy or /sell to your bot</div></div>
+        <button class="switch ${sig.telegram.on ? "on" : ""}" data-switch="telegram"></button></div>
+      <div class="sub" style="margin-top: 16px">${sig.telegram.ready
+        ? "Only your own chat (TELEGRAM_CHAT_ID) is obeyed; messages from anyone else are ignored."
+        : `Set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID in <a href="#settings/ai" style="color: var(--accent)">Settings → AI &amp; Telegram</a> first.`}</div>
+      <details><summary>Setup guide: Telegram</summary><ol>
+        <li>Create a bot with @BotFather and put its token in Settings.</li>
+        <li>Message your bot once; the bot log shows your chat id. Put it in Settings.</li>
+        <li>Turn this source on, then Stop and Start the bot.</li>
+        <li>Send <code>/buy</code> or <code>/sell</code>. /status, /pause and /stop keep working as before.</li>
+      </ol></details>`;
+  const rows = sig.history.filter((s) => sigFilter === "all" || s.reason.startsWith(sigFilter));
+  $("sigfeed").innerHTML = rows.length ? rows.map((s) => `
+    <div class="item"><b class="${esc(s.action)}">${esc(s.action).toUpperCase()}</b><span class="sub">${when(s.at)} · ${esc(s.source)}</span>
+    <div>${esc(s.reason)}</div></div>`).join("") : `<div class="empty">Nothing from this source yet</div>`;
+}
+
+$("sourcelist").addEventListener("click", (event) => {
+  const card = event.target.closest("[data-source]");
+  if (card) { pickedSource = card.dataset.source; loadSignals(); }
+});
+$("sigfilter").addEventListener("click", (event) => {
+  if (!event.target.dataset.f) return;
+  sigFilter = event.target.dataset.f;
+  for (const button of $("sigfilter").children) button.classList.toggle("on", button === event.target);
+  loadSignals();
+});
+$("source").addEventListener("click", async (event) => {
+  const target = event.target;
+  try {
+    if (target.dataset.switch) {
+      const on = !target.classList.contains("on");
+      if (on && mode === "live" && !confirm("MODE is live: signals from this source will trade real money. Turn it on?")) return;
+      showMode(await api("/api/signals/switch", { source: target.dataset.switch, on }));
+      if ($("go").textContent === "Stop") alert("Saved. Stop and Start the bot to apply.");
+    } else if (target.dataset.act === "copy") {
+      $("hookurl").select(); navigator.clipboard?.writeText($("hookurl").value); target.textContent = "Copied";
+      return;
+    } else if (target.dataset.act === "rotate") {
+      if (!confirm("Make a new URL? The old one stops working: update your TradingView alerts.")) return;
+      await api("/api/signals/rotate", {});
+    } else if (target.dataset.act === "ping") {
+      await api("/api/signals/ping", {});
+      $("pingmsg").textContent = "Sent. A running bot logs it as skipped within a few seconds: the path works, nothing traded.";
+      return;
+    } else return;
+  } catch (error) { alert(error.message); }
+  loadSignals();
+});
+
+let account = null;
+// The header's MT5 button: says whether TradeBot is linked to MetaTrader 5, and opens it when clicked.
+function showLink(state) {
+  const [kind, text, tip] = !state ? ["down", "MT5 · not linked", "TradeBot cannot reach MetaTrader 5. Click to open it."]
+    : !state.connected ? ["down", "MT5 · not linked", state.error || "TradeBot cannot reach MetaTrader 5. Click to open it."]
+    : !state.logged_in ? ["partial", "MT5 · no account", "MetaTrader 5 is open but logged in to no account. Log in on the MetaTrader 5 page."]
+    : !state.online ? ["down", "MT5 · offline", `Account ${state.login} on ${state.server} is not connected to the broker. Usually a wrong server or password, an expired demo account, or no internet: MT5's Journal tab says which. Click to open MT5.`]
+    : ["linked", "MT5 · linked", `Linked to account ${state.login} on ${state.server}. Click to open MetaTrader 5.`];
+  $("mt5btn").className = "mt5btn " + kind; $("mt5btn").textContent = text; $("mt5btn").title = tip;
+}
+$("mt5btn").addEventListener("click", async () => {
+  $("mt5btn").textContent = "MT5 · opening…";
+  try { await api("/api/broker/open", {}); } catch (error) { alert(error.message); }
+  setTimeout(() => loadBroker().catch(() => showLink(null)), 1500);
+});
+
+// Demo / Live follows the account MT5 is logged in to. A real-money account is asked about once per login,
+// and only while the window is on screen; on "no" the bot stays in Demo and refuses that account.
+const askedLive = new Set();
+async function followAccount(state) {
+  let live = false;
+  const approved = ((state.accounts || {}).live || {}).login;
+  // asked when switching to Live, and when MT5 is on another real account than the approved one
+  if (!state.demo && (mode !== "live" || (approved && approved !== String(state.login)))) {
+    if (askedLive.has(state.login) || document.visibilityState !== "visible") return;
+    askedLive.add(state.login);
+    live = confirm(approved && mode === "live"
+      ? `MetaTrader 5 switched to ANOTHER real money account: ${state.login} on ${state.server} (your Live account is ${approved}).\n\nLet the bot trade ${state.login} instead? Until you say yes it refuses to.`
+      : `MetaTrader 5 is logged in to a REAL MONEY account: ${state.login} on ${state.server}.\n\nSwitch TradeBot to Live and let the bot trade it?`);
+    if (!live) return;
+  }
+  try {
+    const result = await api("/api/broker/follow", { live });
+    if (result.settings) { showMode(result.settings); buildForm(result.settings); }
+  } catch (error) { alert(error.message); }
+}
+
+async function loadBroker() {
+  try { account = await api("/api/broker"); } catch (error) { showLink(null); throw error; }
+  showLink(account);
+  const accountKind = account.demo ? "demo" : "live", filed = (account.accounts || {})[accountKind] || {};
+  if (account.logged_in && account.online && mode && (accountKind !== mode || filed.login !== String(account.login))) followAccount(account);
+  const kind = account.logged_in ? (account.demo ? "demo" : "real") : "";
+  $("balance").className = "balance " + kind;
+  $("balance").innerHTML = account.logged_in ? `<b>${account.balance.toFixed(2)} ${esc(account.currency)}</b><span>${account.demo ? "DEMO" : "REAL MONEY"}</span>` : "";
+  $("navacct").innerHTML = kind ? `<span class="pill ${kind}">${kind.toUpperCase()}</span>` : "";
+  const ownBlock = account.own
+    ? `<div class="ownbox"><div><b>TradeBot's own MT5</b><div class="sub">Runs hidden, apart from your own MetaTrader.</div></div>
+        <button class="ghost" data-mt5show="${account.shown ? 0 : 1}">${account.shown ? "Hide MT5" : "Show MT5"}</button></div>`
+    : `<div class="ownbox" style="display: block"><b>Using this PC's MetaTrader 5</b>
+        <div class="sub" style="margin-top: 4px">The bot shares it with your manual trading: logging in here, or switching Demo / Live, changes the account your MetaTrader 5 shows too.</div></div>`;
+  const saved = account.accounts || {};
+  const slots = `<div class="slots">${["demo", "live"].map((m) => `
+    <div class="slot ${mode === m ? "on" : ""}"><span class="pill ${m === "demo" ? "demo" : "real"}">${m.toUpperCase()}</span>
+      <b>${saved[m] && saved[m].login ? esc(saved[m].login) : "not set"}</b>
+      <div class="sub">${saved[m] && saved[m].login ? esc(saved[m].server) + (mode === m ? " · in use" : " · press " + (m === "demo" ? "Demo" : "Live") + " at the top to use") : "log in to one with the form"}</div></div>`).join("")}</div>`;
+  $("acct").innerHTML = ownBlock + slots + (!account.connected ? `<b>MT5 not reachable</b><div class="sub" style="margin-top: 8px">${esc(account.error)}</div>
+      <div class="sub" style="margin-top: 8px">Install MetaTrader 5 from your broker and open it once.</div>`
+    : !account.logged_in ? `<b>Terminal open, no account</b><div class="sub" style="margin-top: 8px">Log in with the form to start trading through it.</div>`
+    : `<div class="agent-head"><b style="font-size: 20px">${esc(account.login)}</b><span class="pill ${kind}">${kind === "demo" ? "DEMO" : "REAL MONEY"}</span></div>
+      <div class="sub">${esc(account.name)} · ${esc(account.company)}</div>
+      <div class="kv"><span>Server</span><b>${esc(account.server)}</b>
+        <span>Connection</span><b class="${account.online ? "win" : "loss"}">${account.online ? "online" : "offline: wrong server or password, an expired demo, or no internet (MT5's Journal says which)"}</b>
+        <span>Balance</span><b>${account.balance.toFixed(2)} ${esc(account.currency)}</b>
+        <span>Equity</span><b>${account.equity.toFixed(2)} ${esc(account.currency)}</b>
+        <span>Leverage</span><b>1:${account.leverage}</b></div>
+      ${kind === "real" && mode !== "live" ? `<div class="sub" style="margin-top: 12px">Real account: the bot only trades it in Live mode. Demo mode refuses a real account.</div>` : ""}`);
+  if (account.logged_in && !$("acctsrv").value) $("acctsrv").value = account.server;
+}
+
+$("acct").addEventListener("click", async (event) => {
+  const { mt5own, mt5show } = event.target.dataset;
+  if (!mt5own && mt5show === undefined) return;
+  try {
+    if (mt5own) await api("/api/broker/own", {});
+    else await api("/api/broker/show", { show: mt5show === "1" });
+  } catch (error) { alert(error.message); }
+  setTimeout(() => loadBroker().catch(() => {}), 800);
+});
+$("loginform").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = Object.fromEntries(new FormData($("loginform")));
+  $("acctpw").value = "";  // do not keep the password in the page
+  $("loginmsg").textContent = "Logging in…"; $("loginmsg").className = "msg";
+  try {
+    const result = await api("/api/broker/login", form);
+    $("loginmsg").textContent = `Logged in, saved as your ${result.saved_as === "demo" ? "Demo" : "Live"} account.`
+      + (result.saved_as !== mode ? ` Press ${result.saved_as === "demo" ? "Demo" : "Live"} at the top to trade it.` : "");
+    $("loginmsg").className = "msg win";
+    loadBroker();
+  } catch (error) { $("loginmsg").textContent = error.message; $("loginmsg").className = "msg loss"; }
+});
+
+// --- Setup: the first-run checklist, also reachable any time from the sidebar ---
+async function setupState() {
+  const [acct, settings, bot, mine] = await Promise.all([api("/api/broker"), api("/api/settings"), api("/api/bot"), api("/api/myagents")]);
+  return { acct, settings, bot, mine, ready: acct.logged_in && bot.configured && mine.length > 0 };
+}
+
+async function loadSetup() {
+  const { acct, settings, bot, mine } = await setupState();
+  const install = acct.install || {};
+  const steps = [
+    // TradeBot's own portable MT5 is switched off for now: a copied terminal answers no Python IPC
+    // (-10004 / -10005, seen 2026-10-07). It uses the PC's MetaTrader 5 until that is solved.
+    ["Install MetaTrader 5", acct.connected || acct.own, `
+      <div class="sub">TradeBot trades through MetaTrader 5, the free terminal most brokers use.</div>
+      ${acct.installed ? `<p>MetaTrader 5 is installed but TradeBot cannot reach it: open it once, then press Check again.</p>
+          <div class="picks"><button class="save" data-act="open">Open MetaTrader 5</button>
+          <button class="ghost" data-act="recheck">Check again</button></div>`
+      : install.state === "downloading" ? `<p>Downloading the official installer from MetaQuotes…</p>`
+        : install.state === "launched" ? `<p>The MetaTrader 5 installer is open: click through it, let MT5 start, then press Check again.</p>
+            <button class="ghost" data-act="recheck">Check again</button>`
+        : `${install.state === "failed" ? `<p class="loss">Download failed: ${esc(install.error)}</p>` : ""}
+          <div class="picks"><button class="save" data-act="install">Download and install MetaTrader 5</button>
+          <button class="ghost" data-act="recheck">I installed it already</button></div>
+          <div class="sub" style="margin-top: 8px">Official installer from MetaQuotes (about 23 MB). Your broker's own MT5 works too.</div>`}`],
+    ["Log in to your broker account", acct.logged_in, `
+      <div class="sub">Use the account and server from your broker's sign-up email. Your password goes straight to MT5; TradeBot never stores it.</div>
+      <form id="setuplogin" autocomplete="off" style="margin-top: 10px">
+        <div class="field"><label>Account number</label><input name="login" inputmode="numeric" required></div>
+        <div class="field"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
+        <div class="field"><label>Server</label><input name="server" required placeholder="e.g. XMGlobal-MT5 6"></div>
+        <button class="save" type="submit">Log in</button> <span class="msg" id="setupmsg"></span>
+        <div class="sub" style="margin-top: 8px">No account yet? Open a free demo account in MetaTrader 5: File → Open an Account.</div>
+      </form>`],
+    ["Choose how it trades", bot.configured && ["demo", "live"].includes(settings.MODE), `
+      <div class="sub">Start on Demo: the bot trades a free demo account from your broker and refuses a real one. Move to Live once you trust its record.</div>
+      <div class="picks">${[["demo", "Demo account (start here)"], ["live", "Live, real money"]].map(([value, label]) =>
+        `<button class="${settings.MODE === value && bot.configured ? "save" : "ghost"}" data-mode="${value}">${label}</button>`).join("")}</div>`],
+    ["Make an agent", mine.length > 0, `
+      <div class="sub">Agents decide the trades: each watches the markets you pick and follows a strategy, a ready one or your own words. It starts in Watch only; switch it to Auto-trade when you trust it.</div>
+      <a class="save" href="#myagents" style="display: inline-block; margin-top: 10px; text-decoration: none">Make an agent</a>`],
+    ["Start the bot", bot.running, `
+      <div class="sub">It checks the market on every new candle and follows the risk limits in Settings. Stop it any time.</div>
+      <button class="save" data-act="start" style="margin-top: 10px">Start the bot</button>`],
+  ];
+  const current = steps.findIndex(([, done]) => !done);
+  $("steps").innerHTML = steps.map(([title, done, body], i) => `
+    <div class="step ${done ? "done" : ""} ${i === current ? "now" : ""}">
+      <div class="step-head"><i>${done ? "✓" : i + 1}</i><b>${title}</b></div>
+      ${i === current ? `<div class="step-body">${body}</div>` : ""}</div>`).join("")
+    + (current < 0 ? `<div class="step done"><div class="step-head"><i>✓</i><b>All set. Watch it on the <a href="#dashboard" style="color: var(--accent)">Dashboard</a>.</b></div></div>` : "");
+  if (install.state === "downloading" || (acct.own_setup || {}).state === "copying") setTimeout(() => location.hash === "#settings/setup" && loadSetup(), 2000);
+}
+
+$("steps").addEventListener("click", async (event) => {
+  const target = event.target;
+  try {
+    if (target.dataset.act === "install") await api("/api/broker/install", {});
+    else if (target.dataset.act === "own") await api("/api/broker/own", {});
+    else if (target.dataset.act === "start") await api("/api/bot/start", {});
+    else if (target.dataset.act === "open") await api("/api/broker/open", {});
+    else if (target.dataset.mode) {
+      if (target.dataset.mode === "live" && !confirm("Use your Live account? The bot will trade real money there.")) return;
+      const settings = await api("/api/broker/mode", { mode: target.dataset.mode });  // also moves MT5 to that account
+      showMode(settings); buildForm(settings);
+    } else if (target.dataset.act !== "recheck") return;
+  } catch (error) { alert(error.message); }
+  loadSetup(); loadBot(); loadBroker().catch(() => {});
+});
+$("steps").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = Object.fromEntries(new FormData(event.target));
+  event.target.password.value = "";
+  $("setupmsg").textContent = "Logging in…";
+  try { await api("/api/broker/login", form); loadSetup(); loadBroker().catch(() => {}); }
+  catch (error) { $("setupmsg").textContent = error.message; $("setupmsg").className = "msg loss"; }
+});
+
+// --- AI agents: the list, and the 5-step wizard that makes or edits one ---
+const STEPS = ["Start from", "What it does", "How careful", "What it may do", "Analyst"];
+const MODES = [["watch", "Watch only", "Shows its calls. Never trades."], ["suggest", "Suggest", "Shows its calls and tells you (Telegram), for you to act on."],
+               ["auto", "Auto-trade", "Places trades, through your risk limits, lot and stops."]];
+let myAgents = [], pickedAgent = null, draft = null, wizStep = 0, marketNames = null, marketQuery = "";
+
+async function loadMyAgents() {
+  if (draft) return renderWizard();
+  myAgents = await api("/api/myagents");
+  if (!myAgents.some((a) => a.id === pickedAgent)) pickedAgent = myAgents[0]?.id;
+  const chosen = myAgents.find((a) => a.id === pickedAgent);
+  $("agentsview").innerHTML = `
+    <div class="chart-head" style="margin-bottom: 12px"><b>${myAgents.length ? `${myAgents.length} agent${myAgents.length > 1 ? "s" : ""}` : "No agents yet"}</b>
+      <button class="save" data-new="1">+ New agent</button></div>
+    ${myAgents.length ? `<div class="gallery">${myAgents.map((a) => `
+      <div class="gcard acard ${a.id === pickedAgent ? "on" : ""}" data-agent="${esc(a.id)}">
+        <div class="agent-head"><b>${esc(a.name)}</b><span class="pill ${a.mode === "auto" ? "real" : "demo"}">${MODES.find((m) => m[0] === a.mode)[1]}</span></div>
+        <div class="sub" style="margin: 6px 0 10px">${esc(a.template ? plainName(a.template) : "Written from scratch")} · ${esc(a.timeframe)} · ${a.runs === "timer" ? `every ${a.every_minutes} min` : "every closed candle"}</div>
+        <div class="rule">${esc(a.strategy || (PLAIN[a.template] || [])[2] || "")}</div>
+        <div class="tags">${a.markets.slice(0, 4).map((m) => `<span>${esc(m)}</span>`).join("")}${a.markets.length > 4 ? `<span>+${a.markets.length - 4}</span>` : ""}
+          <span>${esc(analystName(a.analyst))}</span><span>${a.totals.trades ? `won ${Math.round(a.totals.win_rate * 100)}% of ${a.totals.trades}` : "no trades yet"}</span>
+          <span>${a.brake_losses ? `pauses after ${a.brake_losses} losses in a row` : "never pauses"}</span>${a.analyst === "rules" ? "" : "<span>learns from its trades</span>"}</div>
+        <div class="latest">${(a.latest || []).map((l) => `<div class="sub"><b style="color: var(--text)">${esc(l.market)}</b> · ${when(l.at)} · <b class="${esc(l.action)}">${esc(l.action)}</b> ${esc((l.reason || "").split(" · ").slice(2).join(" · "))}</div>`).join("")
+          || `<div class="sub">No checks yet: it decides each time a ${esc(a.timeframe)} candle closes, while the bot runs.</div>`}</div>
+        <div class="seg" style="margin-top: 12px">${MODES.map(([id, label]) => `<button type="button" data-setmode="${id}" class="${a.mode === id ? "on" : ""}">${label}</button>`).join("")}</div>
+        <div style="display: flex; gap: 8px; margin-top: 10px"><button class="ghost" data-edit="1">Edit</button><button class="ghost" data-delete="1">Delete</button></div>
+      </div>`).join("")}</div>
+    <div class="row" style="margin-top: 14px"><div class="card"><div class="label" style="color: var(--accent)">• ${esc(chosen ? chosen.name : "")}: latest calls</div>
+      <div class="feed" id="myagentfeed">${feedHtml((chosen?.decisions || []).map((d) => ({ ...d, source: "agent" })))}</div></div></div>`
+    : `<div class="empty">Make one with + New agent: start from a ready strategy or write your own.</div>`}`;
+}
+
+const analystName = (id) => ({ rules: "Built-in rules (free)", saved: "Your AI order (Settings)", claude: "Claude", openai: "GPT", gemini: "Gemini" })[id] || id;
+
+function startWizard(agent) {
+  draft = agent ? JSON.parse(JSON.stringify(agent)) : { name: "New agent", template: "", strategy: "", markets: [], timeframe: timeframeNow,
+    runs: "candle", every_minutes: 15, min_confidence: 60, mode: "watch", analyst: "rules", brake_losses: 4 };
+  wizStep = agent ? 1 : 0;
+  renderWizard();
+}
+
+function renderWizard() {
+  const bar = STEPS.map((label, i) => `${i ? `<span class="sep"></span>` : ""}<span class="st ${i < wizStep ? "done" : i === wizStep ? "now" : ""}" data-goto="${i}">
+    <i>${i < wizStep ? "✓" : i + 1}</i>${label}</span>`).join("");
+  const body = [stepStart, stepWhat, stepCareful, stepMayDo, stepAnalyst][wizStep]();
+  $("agentsview").innerHTML = `<div class="wiz">
+    <div class="steps-bar">${bar}<span class="grow"></span><button class="ghost" data-cancel="1">✕ Cancel</button><button class="save" data-saveagent="1">Save agent</button></div>
+    ${body}<div class="msg loss" id="wizmsg"></div>
+    ${wizStep ? `<div class="wiznav"><button class="ghost" data-goto="${wizStep - 1}">Back</button>
+      ${wizStep < 4 ? `<button class="save" data-goto="${wizStep + 1}">Next: ${STEPS[wizStep + 1]}</button>` : `<button class="save" data-saveagent="1">Save agent</button>`}</div>` : ""}</div>`;
+  if (wizStep === 1) loadMarkets();
+  showUnderstood();
+}
+
+// What the built-in analyst reads in the strategy text, refreshed as it is typed.
+let understoodTimer = null;
+function showUnderstood() {
+  clearTimeout(understoodTimer);
+  understoodTimer = setTimeout(async () => {
+    if (!$("understood") && !$("costest")) return;
+    const got = await api("/api/myagents/understand", { strategy: draft.strategy, template: draft.template }).catch(() => null);
+    if (!got) return;
+    costInfo = got;
+    if ($("costest")) $("costest").innerHTML = costLine();
+    if (!$("understood")) return;
+    const list = (items) => items.length ? items.map((item) => `<span>${esc(item)}</span>`).join("") : `<span class="sub">nothing</span>`;
+    $("understood").innerHTML = got.exact
+      ? `<div class="sub" style="margin-top: 10px">Built-in analyst: runs the <b>${esc(PLAIN[draft.template][0])}</b> setup exactly as written. Edit the words and it reads them instead.</div>`
+      : `<div class="label" style="margin-top: 12px">What the built-in analyst reads</div>
+        ${["buy", "sell"].map((side) => `<div class="tags"><b style="min-width: 40px">${side === "buy" ? "Buy" : "Sell"}${
+          got.need?.[side] ? ` · any ${got.need[side]} of ${got[side].length}` : ""}</b>${list(got[side])}</div>`).join("")}
+        ${got.unknown.length ? `<div class="sub loss" style="margin-top: 6px">Not understood (that side will not trade): ${got.unknown.map(esc).join(" · ")}</div>` : ""}`;
+  }, 300);
+}
+
+const stepStart = () => `
+  <div class="blank"><div><b style="color: var(--accent)">+</b> <b>Start blank</b>
+    <div class="sub">Describe any strategy in plain English. The numbers you write are enforced the same way a template's are.</div></div>
+    <button class="ghost" data-template="">Write my own</button></div>
+  <div class="sub" style="margin-bottom: 10px">Or start from a ready strategy, ordered by how picky it is. Every new agent starts in Watch only: it records its calls from the first candle, and you decide about trading once there is something to look at.</div>
+  <div class="gallery">${Object.entries(PLAIN).map(([id, [name, idea, rule, conditions, timeframe]]) => `
+    <div class="gcard" data-template="${id}"><b style="font-size: 17px">${esc(name)}</b>
+      <div class="sub" style="margin: 6px 0 10px">${esc(idea)}</div><div class="rule">${esc(rule)}</div>
+      <div class="picky"><span class="label">How picky</span><b>${PICKY[conditions] || ""}</b></div><div class="bars">${pickyBars(conditions)}</div>
+      <div class="tags">${timeframe ? `<span>${timeframe} candles</span>` : ""}<span>${conditions} condition${conditions === 1 ? "" : "s"}</span><span>free to run</span></div></div>`).join("")}</div>`;
+
+const stepWhat = () => `
+  <div class="field"><label>Name</label><input data-f="name" value="${esc(draft.name)}"></div>
+  <div class="field"><label>Strategy, in plain English</label>
+    <textarea data-f="strategy" placeholder="Buy when EMA(9) crosses above EMA(21) and RSI is between 45 and 65.">${esc(draft.strategy)}</textarea>
+    <small>Enforced, whatever the analyst says: an RSI range you write ("RSI between 45 and 65") and the minimum confidence (next step). Lot size, stop loss and take profit always come from Settings.</small>
+    <div id="understood"></div></div>
+  <div class="field"><label>Markets (<span id="mcount">${draft.markets.length}</span> selected)</label>
+    <input id="msearch" placeholder="Search markets, e.g. GOLD, EURUSD" value="${esc(marketQuery)}"><div class="chips" id="mchips">Loading the broker's markets…</div></div>`;
+
+const stepCareful = () => `
+  <div class="fields" style="max-width: 760px">
+    <div class="field"><label>Timeframe</label><select data-f="timeframe">${["M1", "M5", "M15", "M30", "H1", "H4", "D1"].map((t) => `<option ${t === draft.timeframe ? "selected" : ""}>${t}</option>`).join("")}</select></div>
+    <div class="field"><label>Runs</label><select data-f="runs"><option value="candle" ${draft.runs === "candle" ? "selected" : ""}>Every closed candle</option>
+      <option value="timer" ${draft.runs === "timer" ? "selected" : ""}>On a timer</option></select>
+      ${draft.runs === "timer" ? `<input data-f="every_minutes" type="number" min="1" max="1440" value="${draft.every_minutes}" style="margin-top: 8px"><small>minutes between runs (AI analysts only)</small>` : ""}</div>
+    <div class="field"><label>Min confidence</label><input data-f="min_confidence" type="number" min="0" max="100" value="${draft.min_confidence}">
+      <small>0 to 100. A call less sure than this becomes a hold.</small></div>
+    <div class="field"><label>Pause after losses in a row</label><input data-f="brake_losses" type="number" min="0" max="20" value="${draft.brake_losses ?? 4}">
+      <small>On Auto-trade, this many losing trades in a row switch it to Watch only and tell you. 0 = never.</small></div></div>
+  ${draft.analyst === "rules" ? "" : `<div class="sub" style="margin-top: 12px">Learns as it goes: after each of its trades closes, the AI writes one lesson, and it reads its own record and latest lessons before its next calls (one more AI call per closed trade). It can learn the wrong thing from a few lucky or unlucky trades; the pause above is the safety net.</div>`}`;
+
+const stepMayDo = () => `<div class="field"><label>What it may do</label><div class="modecards">${MODES.map(([id, label, text]) =>
+  `<button type="button" data-mode-pick="${id}" class="${draft.mode === id ? "on" : ""}"><b>${label}</b><span>${text}</span></button>`).join("")}</div></div>`;
+
+const stepAnalyst = () => `<div class="field"><label>Analyst</label><select data-f="analyst">
+  ${["rules", "saved", "claude", "openai", "gemini"].map((id) =>
+    `<option value="${id}" ${draft.analyst === id ? "selected" : ""}>${analystName(id)}${id === "saved" ? ` — ${esc(currentOrder())}` : ""}</option>`).join("")}</select>
+  <small>The built-in analyst reads your written rules and checks them on the broker's own candles: RSI, moving averages, MACD, Bollinger bands, candle patterns. It trades only when every rule of one side holds and the other side's does not; anything it cannot read, or anything ambiguous, is a hold. No account, no API key, works offline. An AI reads your text and the market instead; each run costs a call, and the daily AI budget in Settings applies.</small>
+  ${draft.analyst === "rules" ? `<div id="understood"></div>` : ""}<div id="costest" class="sub" style="margin-top: 10px"></div></div>
+  <div class="field" style="margin-top: 16px"><label>Test on past prices</label>
+    <div class="sub">Runs it over each market's past candles on paper, with your lot, stops and limits from Settings. Free.${draft.analyst === "rules" ? "" : " An AI agent is tested with the built-in analyst reading its text: its AI may decide differently."} The period is split in two halves: a strategy that made money in only one half more likely got lucky. News pauses are not in the test (no past calendar). Past results do not promise future ones.</div>
+    <div class="copy" style="margin-top: 8px"><select id="btmonths">${[[1, "Last month"], [3, "Last 3 months"], [6, "Last 6 months"], [12, "Last year"]].map(([m, label]) =>
+      `<option value="${m}" ${m === btMonths ? "selected" : ""}>${label}</option>`).join("")}</select>
+      <button class="ghost" type="button" data-backtest="1">Test it</button>
+      <button class="ghost" type="button" data-compare="1">Compare all ${Object.keys(PLAIN).length} ready strategies</button></div>
+    <div id="btresult"></div></div>`;
+let btMonths = 1;
+const day = (t) => new Date(t * 1000).toISOString().slice(0, 10);
+const halvesWord = ([first, second]) => !first.trades && !second.trades ? "no trades"
+  : first.net > 0 && second.net > 0 ? `<span class="win">made money in both halves</span>`
+  : first.net > 0 || second.net > 0 ? `<span>only one half made money: may be luck</span>` : `<span class="loss">lost in both halves</span>`;
+const testCells = (t, halves) => `<td>${t.trades}</td><td>${t.trades ? Math.round(t.win_rate * 100) + "%" : "—"}</td>
+  <td class="${t.net > 0 ? "win" : t.net < 0 ? "loss" : ""}">${money(t.net)}</td>
+  <td>${halves ? `${money(halves[0].net)} / ${money(halves[1].net)}` : ""}</td><td>${t.trades ? "$" + t.max_drawdown.toFixed(2) : "—"}</td>`;
+const TEST_HEAD = `<th>Trades</th><th>Won</th><th>Profit</th><th>1st / 2nd half</th><th>Worst drop</th>`;
+const TF_MINUTES = { M1: 1, M5: 5, M15: 15, M30: 30, H1: 60, H4: 240, D1: 1440 };
+let costInfo = null;
+function costLine() {
+  if (!costInfo) return "";
+  const readable = costInfo.exact || ((costInfo.buy.length || costInfo.sell.length) && !costInfo.unknown.length);
+  if (draft.analyst === "rules") return "Cost: free, the built-in analyst calls no AI.";
+  const minutes = draft.runs === "timer" ? draft.every_minutes : TF_MINUTES[draft.timeframe];
+  const perHour = draft.markets.length * 60 / minutes, usd = perHour * costInfo.per_call;
+  const hours = costInfo.budget > 0 && usd > 0 ? costInfo.budget / usd : Infinity;
+  return `<b>Cost:</b> about ${Math.round(perHour)} AI calls an hour (${draft.markets.length} market${draft.markets.length === 1 ? "" : "s"}, every ${minutes} min) ≈ $${usd.toFixed(2)} an hour.`
+    + (hours < 24 ? ` <span class="loss">The daily AI budget ($${costInfo.budget}) runs out after about ${hours.toFixed(1)} hours; then it holds until tomorrow.</span>` : "")
+    + (readable ? ` <b>The built-in analyst can read all of this strategy: it would decide the same rules for free.</b>` : "");
+}
+
+const currentOrder = () => ($("AI_PROVIDER")?.value || "claude").split(",").map((p) => ({ claude: "Claude", openai: "GPT", gemini: "Gemini" })[p] || p).join(" › ");
+
+async function loadMarkets() {
+  try { marketNames = marketNames || await api("/api/broker/markets"); } catch { marketNames = []; }
+  const kinds = Object.fromEntries(marketNames);  // name -> Metal, Forex, Stock, ... from the broker's own folders
+  const names = marketNames.length ? marketNames.map(([name]) => name) : [...new Set([...(draft.markets || []), (await api("/api/settings")).SYMBOL])];
+  const q = marketQuery.toUpperCase();
+  const matches = (n) => n.toUpperCase().includes(q) || (kinds[n] || "").toUpperCase().includes(q);  // "metal" finds every metal
+  const shown = [...draft.markets, ...names.filter((n) => !draft.markets.includes(n) && matches(n))].slice(0, 120);
+  if ($("mchips")) $("mchips").innerHTML = shown.map((n) => `<button type="button" data-market="${esc(n)}" class="${draft.markets.includes(n) ? "on" : ""}">${esc(n)}${
+    kinds[n] ? `<small class="k-${esc(kinds[n].toLowerCase())}">${esc(kinds[n])}</small>` : ""}</button>`).join("")
+    || `<span class="sub">No market matches. ${marketNames.length ? "" : "MT5 is not logged in, so only the bot's symbol is listed."}</span>`;
+  if ($("mcount")) $("mcount").textContent = draft.markets.length;
+}
+
+$("agentsview").addEventListener("input", (event) => {
+  const field = event.target.dataset.f;
+  if (field) draft[field] = event.target.type === "number" ? +event.target.value : event.target.value;
+  if (field === "strategy" || field === "every_minutes") showUnderstood();
+  if (event.target.id === "msearch") { marketQuery = event.target.value; loadMarkets(); }
+});
+$("agentsview").addEventListener("change", (event) => {
+  const field = event.target.dataset.f;
+  if (!field) return;
+  draft[field] = event.target.type === "number" ? +event.target.value : event.target.value;
+  if (field === "runs" || field === "analyst") renderWizard();  // the timer's minutes and the analyst's reading come and go
+});
+$("agentsview").addEventListener("click", async (event) => {
+  const el = event.target.closest("[data-new],[data-agent],[data-setmode],[data-edit],[data-delete],[data-template],[data-goto],[data-cancel],[data-saveagent],[data-market],[data-mode-pick],[data-backtest],[data-compare],[data-use]");
+  if (!el) return;
+  const d = el.dataset, card = el.closest("[data-agent]");
+  try {
+    if (d.new) return startWizard(null);
+    if (d.setmode) {
+      if (d.setmode === "auto" && mode === "live" && !confirm("MODE is live: this agent will place real-money trades. Turn on Auto-trade?")) return;
+      await api("/api/myagents/mode", { id: card.dataset.agent, mode: d.setmode });
+      return loadMyAgents();
+    }
+    if (d.edit) return startWizard(myAgents.find((a) => a.id === card.dataset.agent));
+    if (d.delete) {
+      if (!confirm("Delete this agent? Its past calls and trades stay in History.")) return;
+      await api("/api/myagents/delete", { id: card.dataset.agent });
+      return loadMyAgents();
+    }
+    if (d.agent && !draft) { pickedAgent = d.agent; return loadMyAgents(); }
+    if (d.template !== undefined && wizStep === 0) {
+      draft.template = d.template;
+      if (d.template) { [draft.name, , draft.strategy] = PLAIN[d.template]; draft.timeframe = PLAIN[d.template][4] || draft.timeframe; }
+      wizStep = 1; return renderWizard();
+    }
+    if (d.market) {
+      draft.markets = draft.markets.includes(d.market) ? draft.markets.filter((m) => m !== d.market) : [...draft.markets, d.market];
+      return loadMarkets();
+    }
+    if (d.modePick) { draft.mode = d.modePick; return renderWizard(); }
+    if (d.backtest || d.compare) {
+      btMonths = +$("btmonths").value;
+      // measured on 2026-10-08: a month of M15 (2,880 candles) takes ~1.7 s to test and ~12.5 s to compare, per market
+      const candles = Math.min(btMonths * 30 * 1440 / TF_MINUTES[draft.timeframe], 50000);
+      const seconds = Math.ceil(candles / 2880 * (d.compare ? 12.5 : 1.7) * (draft.markets.length || 1));
+      $("btresult").innerHTML = `<div class="sub" style="margin-top: 8px">Testing… about ${seconds < 90 ? seconds + " seconds" : Math.round(seconds / 60) + " minutes"}.</div>`;
+      const result = await api(d.compare ? "/api/myagents/compare" : "/api/myagents/backtest", { ...draft, months: btMonths });
+      const capped = result.capped ? `<div class="sub" style="margin-top: 6px">Capped at 50,000 candles per market: pick a longer timeframe for a longer period.</div>` : "";
+      if (d.compare) {
+        $("btresult").innerHTML = `<div class="sub" style="margin-top: 8px">${esc(draft.markets.join(", "))} · ${esc(draft.timeframe)} · ${day(result.from)} to ${day(result.to)}, best first</div>
+          <table class="bt"><tr><th>Strategy</th>${TEST_HEAD}<th>Halves</th><th></th></tr>
+          ${result.rows.map((r) => `<tr><td>${esc(r.name)}</td>${testCells(r.totals, r.halves)}<td>${halvesWord(r.halves)}</td>
+            <td><button class="ghost" type="button" data-use="${esc(r.template)}">Use</button></td></tr>`).join("")}</table>${capped}`;
+        return;
+      }
+      $("btresult").innerHTML = `<table class="bt"><tr><th>Market</th><th>Period</th>${TEST_HEAD}<th>Halves</th></tr>
+        ${result.markets.map((m) => `<tr><td>${esc(m.market)}</td><td>${day(m.from)} to ${day(m.to)}</td>${testCells(m.totals, m.halves)}<td>${halvesWord(m.halves)}</td></tr>`).join("")}
+        ${result.markets.length > 1 ? `<tr><td>All</td><td></td>${testCells(result.total)}<td></td></tr>` : ""}</table>
+        ${result.markets.filter((m) => m.too_wide >= 0.5).map((m) => `<div class="sub loss" style="margin-top: 6px">${esc(m.market)}: the spread was wider than your limit (${m.spread_limit} points, MAX_SPREAD_POINTS in Settings) on ${Math.round(m.too_wide * 100)}% of candles, so the bot skips it almost always, live too. Raise the limit or drop this market.</div>`).join("")}
+        <div class="sub" style="margin-top: 6px">${result.total.trades < 30 ? "Fewer than 30 trades: too few to judge. Try a longer period, or watch it live for a while before trusting it." : "Enough trades for a first look; it is still the past."}</div>${capped}`;
+      return;
+    }
+    if (d.use) {  // a strategy from the comparison: its words replace the agent's, the rest stays
+      [draft.name, , draft.strategy] = PLAIN[d.use];
+      draft.template = d.use;
+      wizStep = 1; return renderWizard();
+    }
+    if (d.goto !== undefined) { wizStep = +d.goto; return renderWizard(); }
+    if (d.cancel) { draft = null; return loadMyAgents(); }
+    if (d.saveagent) {
+      if (draft.mode === "auto" && mode === "live" && !confirm("MODE is live: this agent will place real-money trades. Save with Auto-trade?")) return;
+      const saved = await api("/api/myagents/save", draft);
+      draft = null; pickedAgent = saved.id; return loadMyAgents();
+    }
+  } catch (error) {
+    if ($("wizmsg")) $("wizmsg").textContent = error.message; else alert(error.message);
+  }
+});
+
+// --- Chart: lightweight-charts (TradingView, Apache-2.0), loaded from the app itself on first use ---
+// One or four panels; each has its own market and timeframe, remembered in this browser.
+const loadChartLib = () => window.LightweightCharts ? Promise.resolve() : new Promise((done, fail) => {
+  const script = document.createElement("script");
+  script.src = "/vendor/lightweight-charts.js"; script.onload = done; script.onerror = () => fail(new Error("chart library missing"));
+  document.head.appendChild(script);
+});
+const CHART_TFS = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"];
+let chartPanels = [], chartLayout = 1, chartPicks = [];  // chartPicks: [market, timeframe] for all four panels
+try { ({ layout: chartLayout = 1, picks: chartPicks = [] } = JSON.parse(localStorage.getItem("charts")) || {}); } catch {}
+const saveCharts = () => { try { localStorage.setItem("charts", JSON.stringify({ layout: chartLayout, picks: chartPicks })); } catch {} };
+
+async function defaultPicks() {  // the bot's market, then the agents' markets, then the broker's first ones
+  const names = [(await api("/api/settings")).SYMBOL];
+  try { for (const a of await api("/api/myagents")) names.push(...a.markets); } catch {}
+  try { names.push(...(await api("/api/broker/symbols")).slice(0, 8)); } catch {}
+  const unique = [...new Set(names)];
+  while (chartPicks.length < 4) chartPicks.push([unique[chartPicks.length] || unique[0], timeframeNow]);
+}
+
+async function buildCharts() {
+  try { await loadChartLib(); } catch (error) { $("pricegrid").innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+  if (chartPicks.length < 4) await defaultPicks();
+  saveCharts();
+  for (const button of $("layout").children) button.classList.toggle("on", +button.dataset.n === chartLayout);
+  for (const panel of chartPanels) panel.chart.remove();
+  $("pricegrid").className = "pricegrid n" + chartLayout;
+  $("pricegrid").innerHTML = chartPicks.slice(0, chartLayout).map((pick, i) => `
+    <div class="card cpanel" data-i="${i}"><div class="chead">
+      <input data-sym list="chartsyms" placeholder="Market" autocomplete="off" value="${esc(pick[0])}">
+      <div class="seg">${CHART_TFS.map((t) => `<button data-tf="${t}" class="${t === pick[1] ? "on" : ""}">${t}</button>`).join("")}</div>
+      <span class="sub" data-msg></span></div><div class="cbox"></div></div>`).join("");
+  const L = window.LightweightCharts;
+  chartPanels = [...$("pricegrid").children].map((el, i) => {
+    const chart = L.createChart(el.querySelector(".cbox"), {
+      autoSize: true,
+      layout: { background: { color: "#131a26" }, textColor: "#8a93a6" },
+      grid: { vertLines: { color: "#1c2433" }, horzLines: { color: "#1c2433" } },
+      rightPriceScale: { borderColor: "#232c3b" }, timeScale: { borderColor: "#232c3b", timeVisible: true },
+    });
+    const series = chart.addSeries(L.CandlestickSeries, {
+      upColor: "#22c55e", downColor: "#ef4444", borderVisible: false, wickUpColor: "#22c55e", wickDownColor: "#ef4444" });
+    return { i, el, chart, series, markers: L.createSeriesMarkers(series, []), lines: [], lastFull: 0 };
+  });
+  if (!$("chartsyms").options.length) api("/api/broker/symbols").then((names) =>
+    $("chartsyms").innerHTML = names.map((n) => `<option value="${esc(n)}">`).join("")).catch(() => {});
+  await Promise.all(chartPanels.map((panel) => loadPanel(panel, true)));
+}
+
+async function loadPanel(panel, full) {
+  const [sym, tf] = chartPicks[panel.i], msg = panel.el.querySelector("[data-msg]");
+  try {
+    const data = await api(`/api/chart?tf=${tf}&count=${full ? 400 : 3}&sym=${encodeURIComponent(sym)}`);
+    msg.textContent = ""; msg.className = "sub";
+    if (!full) { for (const candle of data.candles) panel.series.update(candle); return; }
+    // ponytail: decimals guessed from the price (EURUSD 5, USDJPY 3, GOLD 2); the broker's own digits if a market looks off
+    const last = data.candles.at(-1)?.close || 0, digits = last < 10 ? 5 : last < 1000 ? 3 : 2;
+    panel.series.applyOptions({ priceFormat: { type: "price", precision: digits, minMove: 10 ** -digits } });
+    panel.series.setData(data.candles);
+    panel.markers.setMarkers(data.marks.map((m) => m.kind === "open"
+      ? { time: m.time, position: m.side === "buy" ? "belowBar" : "aboveBar", shape: m.side === "buy" ? "arrowUp" : "arrowDown",
+          color: m.side === "buy" ? "#22c55e" : "#ef4444", text: m.side.toUpperCase() }
+      : { time: m.time, position: "inBar", shape: "circle", color: m.profit >= 0 ? "#22c55e" : "#ef4444", text: money(m.profit) }));
+    for (const line of panel.lines) panel.series.removePriceLine(line);
+    panel.lines = data.open ? [["entry", data.open.entry, "#e6e9ef"], ["stop loss", data.open.sl, "#ef4444"], ["take profit", data.open.tp, "#22c55e"]]
+      .map(([title, price, color]) => panel.series.createPriceLine({ price, color, title, lineWidth: 1, lineStyle: 2 })) : [];
+    panel.lastFull = Date.now();
+  } catch (error) {
+    if (full) { msg.textContent = error.message; msg.className = "sub loss"; }  // e.g. a market name the broker lacks
+  }
+}
+
+const loadPrice = () => chartPanels.length && $("pricegrid").children.length === chartLayout
+  ? Promise.all(chartPanels.map((panel) => loadPanel(panel, true))) : buildCharts();
+
+$("layout").addEventListener("click", (event) => {
+  if (!event.target.dataset.n) return;
+  chartLayout = +event.target.dataset.n;
+  buildCharts();
+});
+$("pricegrid").addEventListener("change", (event) => {  // a market picked from the list, or typed and Enter
+  if (!("sym" in event.target.dataset)) return;
+  const panel = chartPanels[+event.target.closest(".cpanel").dataset.i];
+  chartPicks[panel.i][0] = event.target.value.trim();
+  saveCharts(); loadPanel(panel, true);
+});
+$("pricegrid").addEventListener("click", (event) => {
+  const tf = event.target.dataset.tf;
+  if (!tf) return;
+  const panel = chartPanels[+event.target.closest(".cpanel").dataset.i];
+  chartPicks[panel.i][1] = tf;
+  for (const button of event.target.parentElement.children) button.classList.toggle("on", button === event.target);
+  saveCharts(); loadPanel(panel, true);
+});
+setInterval(() => {  // live: the forming candle every 3 s, everything (new trades) every 30 s
+  if (!location.hash.startsWith("#price")) return;
+  for (const panel of chartPanels) loadPanel(panel, Date.now() - panel.lastFull > 30000);
+}, 3000);
+
+const PAGES = { dashboard: "Dashboard", price: "Chart", history: "History", signals: "Signals", myagents: "AI agents", broker: "MetaTrader 5", settings: "Settings" };
+// Settings has two tabs: Setup (the five first-run steps) and the settings form. #settings/setup opens Setup.
+function showSettingsTab(tab) {
+  $("setup").hidden = tab !== "setup";
+  $("form").hidden = tab === "setup";
+  for (const button of $("settabs").children) button.classList.toggle("on", button.dataset.tab === tab);
+  if (tab === "setup") loadSetup();
+}
+$("settabs").addEventListener("click", (event) => {
+  if (event.target.dataset.tab) location.hash = event.target.dataset.tab === "setup" ? "#settings/setup" : "#settings";
+});
+function route() {
+  const [wanted, sub] = location.hash.slice(1).split("/");  // #settings/ai opens that Settings section
+  const page = wanted in PAGES ? wanted : "dashboard";
+  const index = FIELDS.findIndex(([name]) => sub && name.toLowerCase().startsWith(sub));
+  if (page === "settings" && index >= 0) {
+    section = index;  // a form built later opens on it; one already built switches now
+    document.querySelector(`.subnav a[data-section="${index}"]`)?.click();
+  }
+  for (const id in PAGES) $(id).hidden = id !== page;
+  for (const link of document.querySelectorAll("nav a")) link.classList.toggle("on", link.dataset.page === page);
+  $("title").textContent = PAGES[page];
+  if (page === "history") loadHistory();
+  if (page === "price") loadPrice(true);
+  if (page === "myagents") loadMyAgents();
+  if (page === "signals") loadSignals();
+  if (page === "broker") loadBroker();
+  if (page === "settings") showSettingsTab(sub === "setup" ? "setup" : "form");
+}
+addEventListener("hashchange", route);
+
+(async () => {
+  PLAIN = await api("/api/templates").catch(() => ({}));  // before any page names a strategy
+  route();
+  const settings = await api("/api/settings");
+  showMode(settings); buildForm(settings);
+  await Promise.all([loadDashboard(), loadBot()]);
+  loadBroker().catch(() => {});  // MT5 may be slow to start; the rest of the page does not wait for it
+  setupState().then(({ ready }) => {  // first run: open Setup unless the user asked for a page
+    $("navsetup").innerHTML = ready ? "" : `<span class="pill real">TODO</span>`;
+    if (!ready && !location.hash) location.hash = "#settings/setup";
+  }).catch(() => {});
+  setInterval(loadDashboard, 15000);
+  setInterval(() => loadBroker().catch(() => {}), 15000);
+  setInterval(loadBot, 3000);
+})();
+</script>
+</body>
+</html>

@@ -126,3 +126,116 @@
 - ยังไม่มีหลักฐานว่า Opus ตัดสินใจเทรดดีกว่า Sonnet: งานของ AI ใน hybrid คือกรอง setup ไม่ใช่ทายทิศราคา
 - คง effort medium ไว้ (Sonnet 5.5 ค่าเริ่มต้นคือ high) ยังไม่ได้วัดว่า low พอไหม
 - ถ้าผลบน paper/demo แย่ลง เปลี่ยน MODEL และ PRICES ใน ai_strategy.py กลับได้ในสองบรรทัด
+## 2026-10-06 ตัวติดตั้ง TradeBot-Setup.exe
+
+- แบบเดียวกับ AutoBotSignal แต่เล็กกว่ามาก: PyInstaller ทำ TradeBot.exe แล้ว Inno Setup ห่อเป็น setup
+  - TradeBot.exe ทำตัวแทน python.exe (launcher.py) ไฟล์ .bat เดิมใช้ต่อได้ แก้แค่ setup.bat
+  - ติดตั้งแบบต่อ user ลง AppData ไม่ต้องใช้ admin เพราะบอทเขียน .env, journal.db ข้างตัวเอง
+  - config.py ใช้โฟลเดอร์ของ exe ตอน frozen ไม่งั้นไฟล์ไปอยู่ใน _internal
+  - ไม่ใช้ Tauri/MSI เพราะยังไม่มี UI ให้ห่อ
+
+## 2026-10-06 หน้า UI (Dashboard + Settings)
+
+- ได้แรงบันดาลใจจาก AutoBotSignal (dark + ส้ม, การ์ดตัวเลข, equity curve, ฟีด decisions)
+  - ui.py ใช้ http.server ของ stdlib + ui.html ไฟล์เดียว กราฟวาด SVG เอง ไม่เพิ่ม library
+  - ฟังแค่ 127.0.0.1 และเช็ก Host/Origin ทุก request กันเว็บอื่นแอบแก้ .env (เช่นสลับ MODE=live)
+  - API key กับ Telegram token ไม่ส่งกลับไปหน้าเว็บ เว้นว่างแปลว่าใช้ค่าเดิม
+  - Settings ตรวจด้วย load_config ตัวเดียวกับที่บอทใช้ตอนเริ่ม
+  - ยังไม่ทำปุ่ม start/stop บอทจากหน้าเว็บ รอบหน้าค่อยว่ากัน
+
+## 2026-10-06 ปุ่ม Start/Stop + หน้า History
+
+- Stop ใช้ stop.flag ตัวเดิม: บอทเช็กไฟล์นี้ทุกรอบ (should_stop) แล้วปิดเองแบบเรียบร้อย
+  - ไม่ kill process: journal ปิดครบ MT5 shutdown ครบ ไม้ที่เปิดอยู่ยังมี SL/TP
+  - หยุดได้ทุกบอท ไม่ว่าเปิดจาก start.bat, run_forever หรือหน้าเว็บ และ watchdog ก็ไม่ restart
+- บอทแตะ bot.alive ทุกรอบ หน้าเว็บใช้ดูว่ามีบอทรันอยู่ กัน Start ซ้อนสองตัวบนบัญชีเดียว
+  - เกิน 120 วินาทีไม่แตะ ถือว่าตาย (ถ้า AI call นานกว่านั้นจะโชว์ผิดเป็น stopped)
+- launcher.py ตั้ง line buffering เอง เพราะ exe จาก PyInstaller ไม่สน PYTHONUNBUFFERED ทำให้ bot.log ว่าง
+
+## 2026-10-07 ทำให้เหมือน AutoBotSignal (เฉพาะส่วนที่ถูกกฎ)
+
+- แกะ AutoBotSignal ดูแค่ระดับโครงสร้าง ไม่ถอดโค้ด: Tauri UI + engine Python (PyInstaller) + Chrome
+  - ไม่ลอก: undetected chromedriver/stealth, จ้างแก้ captcha, API โบรกเกอร์ที่คนแกะเอง (ผิด ToS เสี่ยงบัญชีโดนแบน)
+  - ไม่ลอกโค้ด/โลโก้/ชื่อ เอาแค่ไอเดีย UX
+- หน้าต่างแอป: pywebview (WebView2 ที่มากับ Windows) แทน Tauri, installer ยังเล็ก (~23MB)
+  - ไม่ทำ tray: บอทเป็น process แยก ปิดหน้าต่างแล้วบอทยังรัน
+- MAX_TRADES_PER_DAY ค่าเริ่ม 0 = ไม่จำกัด เพื่อไม่เปลี่ยนพฤติกรรมบอทเดิม
+- Agents = strategy แต่ละตัว จับคู่เทรดจาก reason "name: ..." (AI brain เขียน reason เอง เลยไม่นับเข้า agent ไหน)
+- Signals: TradingView ส่ง webhook ได้แค่ URL สาธารณะ เราไม่มีเซิร์ฟเวอร์ → ใช้ ntfy.sh (ฟรี ไม่ต้องสมัคร)
+  - topic สุ่มยาวคือ secret ตัวเดียว, บอท poll ทุกรอบ 5 วิ ด้วย urllib ไม่ต้องลง lib
+  - สัญญาณบอกแค่ buy/sell, lot/SL/TP/กฎความเสี่ยงยังเป็นของบอททั้งหมด (current_block ตัวเดียวกับ strategies)
+  - สัญญาณที่ส่งมาตอนบอทปิดจะถูกข้าม ไม่เทรดย้อนหลัง
+  - Telegram /buy /sell ใช้บอท Telegram ของเราเอง ไม่ล็อกอินด้วยเบอร์แบบ AutoBotSignal
+
+## 2026-10-07 แอปใช้งานเดี่ยวได้ (standalone) + หน้า Setup
+
+- ไม่ยัดไฟล์ MT5 ลงในตัวติดตั้ง: MT5 เป็นของ MetaQuotes การแจกต่อเองเสี่ยงผิด license
+  - แทนด้วยปุ่มเดียวในหน้า Setup: ดาวน์โหลดตัวติดตั้งทางการจาก download.mql5.com แล้วเปิดให้กด
+  - MT5 ของโบรกเกอร์ไหนก็ใช้ได้ (หาจาก uninstall list ใน registry)
+- หน้า Setup 5 ขั้น: MT5 → ล็อกอิน → โหมด → symbol → Start, เปิดเองตอนตั้งค่ายังไม่ครบ
+  - โหมดมาก่อน symbol: การเลือก symbol สร้าง .env ซึ่งจะทำให้ขั้นโหมดถูกติ๊กเองถ้าอยู่หลัง
+- รหัสผ่านโบรกเกอร์ส่งตรงเข้า mt5.login ไม่เก็บไม่ log, ห้ามสลับบัญชีตอนบอทรัน
+- pywebview ถูกบังคับใช้ WebView2 (gui=edgechromium) ถ้าไม่มีให้เปิดเบราว์เซอร์แทน ไม่ถอยไปใช้ IE engine
+- build_installer.bat ล้าง PYTHONPATH และตรวจว่า MetaTrader5 ตัวจริง (_core.pyd) อยู่ในตัวแพ็ก
+  - เคยหลุด: PYTHONPATH=tests_support ทำให้ installer รุ่น 13:33 แพ็ก MT5 ตัวปลอมไป เทรดไม่ได้เลย
+
+## 2026-10-07 แก้ตามผลทดสอบของ sub agent
+
+- สัญญาณจากข้างนอกติดเวลาส่ง เก่ากว่า 60 วิข้าม (MT5 หลุดแล้วกลับมา ต้องไม่เทรดย้อนหลัง)
+- ข้อความแบบ exit/close/flat ไม่เทรด เพราะ SL/TP ของบอทปิดไม้เอง; คู่มือเปลี่ยนเป็น {{strategy.market_position}}
+- บอทจองพอร์ต 47821 ตอนรัน ตัวที่สองเปิดไม่ขึ้น (OS คืนพอร์ตเองตอน process ตาย แม้ crash)
+  - bot.alive ยังใช้แสดงสถานะในหน้าเว็บ แต่ไม่ใช่ตัวกันซ้อนอีกต่อไป
+- save_settings/arm/switch_source อ่าน-รวม-เขียนใน RLock เดียว กันกดเร็วแล้วค่าหาย
+- เช็ก Sec-Fetch-Site กัน <img> ข้ามเว็บสั่ง MT5 เปิด; error ทุกตัวตอบเป็น JSON ไม่ตัดการเชื่อมต่อ
+- ถอนการติดตั้งลบ .env (มี key) แต่เก็บ journal.db
+- ไม่แก้: AI ช้า >60 วิ กับสัญญาณช่วงตลาดปิดในโหมด paper (ต่ำ ต้องรู้ offset เวลา server)
+- ไม่บังคับยืนยัน MODE=live ฝั่ง server: ใครเรียก API ได้ก็แก้ .env ตรงๆ ได้อยู่แล้ว หน้าเว็บถามยืนยันแล้ว
+
+## 2026-10-07 เลือก AI ได้ 3 เจ้า: Claude, GPT, Gemini
+
+- AI_PROVIDER = claude | openai | gemini, key ของใครของมัน (ANTHROPIC/OPENAI/GEMINI_API_KEY), AI_MODEL ว่าง = ค่าเริ่ม
+- GPT กับ Gemini เรียกผ่าน HTTPS ด้วย urllib ไม่ลง SDK เพิ่ม; ทุกเจ้าผ่าน ask() ตัวเดียว ตอบ JSON schema เดียวกัน
+  - GPT: Responses API, text.format json_schema strict, รุ่นเริ่ม gpt-6.1-sol ($2 / $0.10 cached / $10)
+  - Gemini: generateContent, responseSchema (ตัว type พิมพ์ใหญ่ ไม่มี additionalProperties), รุ่นเริ่ม gemini-3.8-flash
+  - ราคา Gemini ใช้ $1.50/$7.50 (ราคาหลังโปรหมด 2026-12-31) ให้งบรายวันประเมินเกินไว้ก่อน ปลอดภัยกว่า
+- ทุก error ของทุกเจ้า = hold พร้อมบอกเหตุผล ไม่มีวันเทรดเพราะ AI พัง
+- ยังไม่ได้ยิง GPT/Gemini จริง (ไม่มี key) ทดสอบด้วยการจำลองคำตอบตามเอกสารทางการเดือนตุลาคม 2026
+- wizard แบบ console ยังถามแค่ key ของ Claude; เลือกเจ้าอื่นในหน้า Settings
+
+## 2026-10-07 desktop เต็มตัว: windowed exe, tray, watchdog
+
+- exe เป็น --windowed (ไม่มี console) เครื่องมือ .bat ใช้ AttachConsole ยืม console ของ cmd
+- ปิดหน้าต่าง = ซ่อนไป tray (pystray), AUTO_START_BOT + watchdog ฟื้นบอทที่ตายเองหลัง 30 วิ
+  ยอมแพ้หลังตายเร็วติดกัน 6 ครั้ง (กันวนเพราะตั้งค่าผิด)
+- ThreadingHTTPServer ของ stdlib ตั้ง SO_REUSEADDR: บน Windows แอปที่สองจองพอร์ตซ้ำได้ → ใช้ SO_EXCLUSIVEADDRUSE
+- **เปิดเองตอนเปิดเครื่อง ให้ตัวติดตั้งทำ (Startup shortcut) ห้ามแอปเขียน Run key เอง**
+  - ครั้งแรกให้แอปเขียน HKCU\...\Run เอง → Defender ตีเป็น Behavior:Win32/Persistence.A!ml
+    แล้วบล็อก exe ตัวนั้นทุกที่ (false positive แต่พฤติกรรมเหมือนมัลแวร์จริง: exe ไม่เซ็น + ฝังตัวเอง)
+  - test_desktop เช็กว่าในโค้ดไม่มีการเขียน Run key อีก
+- การทดสอบ installer ซ้อนกับของผู้ใช้ทำให้รายการ Apps & features และ Start Menu หาย (AppId เดียวกัน)
+  ซ่อมแล้วด้วยการลงทับ; ต่อไปทดสอบจาก dist\TradeBot ตรงๆ
+
+## 2026-10-07: Demo / Live ตามบัญชีที่ MT5 ล็อกอินอยู่ (ผู้ใช้เลือกข้อ 3)
+- แอปเช็คทุก 15 วิ ถ้าบัญชีใน MT5 ไม่ตรงกับ MODE ก็สลับให้ และจดเลขบัญชีลงช่อง Demo หรือ Live
+- บัญชี Demo สลับให้ทันที ไม่ต้องถาม
+- บัญชีเงินจริงต้องให้ผู้ใช้กดยืนยันก่อน ถามครั้งเดียวต่อเลขบัญชี และถามเฉพาะตอนหน้าต่างแอปเปิดอยู่
+- ถ้าผู้ใช้ตอบไม่ MODE ยังเป็น demo ต่อ และ risk.account_error ทำให้บอทไม่ยอมเทรดบัญชีนั้น
+- ไม่เลือกแบบสลับเองล้วนๆ (ข้อ 2) เพราะแค่ล็อกอินบัญชีจริงใน MT5 เล่นๆ บอทก็จะเทรดเงินจริงเงียบๆ
+
+## 2026-10-08: รวมหน้า Strategies เข้า AI agents + ตัววิเคราะห์ในตัว (ผู้ใช้เลือก 1,1)
+- บอทหลักเลิกเทรดตาม STRATEGY เอง (ลบ check_market) ออเดอร์จากกฎทุกตัวมาจาก agent ทางเดียว
+- ย้ายครั้งเดียวตอนเปิดแอป: สูตรที่เคยเปิดไว้กลายเป็น agent โหมด auto บน SYMBOL/TIMEFRAME เดิม
+  - จำว่าทำแล้วด้วยไฟล์ strategies.moved; ถ้ายังไม่มี .env (ติดตั้งใหม่) จะไม่สร้าง agent ให้
+  - BRAIN=ai/hybrid ย้ายเป็น analyst "saved" (AI ตัดสินจาก setup ของสูตร)
+- ตัววิเคราะห์ในตัว (plainrules.py) อ่านกฎภาษาอังกฤษด้วย regex ไม่ใช้ AI
+  - ประโยคที่อ่านไม่ออก ฝั่งนั้นไม่เทรด (ไม่เดา) และโชว์ในหน้าสร้าง agent
+  - สูตรสำเร็จรูปที่ไม่แก้ข้อความ รันโค้ดเดิมใน strategies.py เป๊ะ เพราะบางสูตร (mr_zscore) อธิบายเป็นคำไม่ครบ
+- ผลข้างเคียง: AI brain ที่เรียนรู้จากเทรดของตัวเอง (BRAIN=ai, reflect/playbook) ไม่ถูกเรียกจากบอทแล้ว เหลือใช้ใน replay.py
+
+## 2026-10-08: agent เรียนรู้จากไม้ที่ปิด + เบรกตัวเอง (ผู้ใช้เลือก 1,2)
+- AI agent: ปิดไม้แล้วให้ AI เขียนบทเรียน 1 ข้อ (ใช้ ai_strategy.reflect เดิม) เก็บไว้ที่ trade นั้น
+  ก่อนตัดสินใจครั้งต่อไป AI เห็นสถิติกับบทเรียนล่าสุดของ agent ตัวเองเท่านั้น
+- ไม่ทำ playbook ต่อ agent: ตาราง playbook มีชุดเดียว ต้องแก้ schema; สถิติ + บทเรียนล่าสุดพอก่อน
+- ตัววิเคราะห์ในตัว (ฟรี) ไม่เรียนรู้: กฎตายตัว ไม่มี AI ให้เขียนบทเรียน
+- เบรก: agent โหมด Auto ที่แพ้ติดกัน brake_losses ไม้ (ค่าเริ่ม 4, 0 = ปิด) ถูกเปลี่ยนเป็น Watch แล้วแจ้งผู้ใช้
+  เป็นตาข่ายกันตอนเรียนผิดทาง; ได้แจ้งผู้ใช้แล้วว่าเรียนมากขึ้นไม่ได้แปลว่าเก่งขึ้นเสมอ

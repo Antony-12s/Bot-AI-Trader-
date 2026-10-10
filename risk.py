@@ -10,7 +10,7 @@ def day_start(server_time):
     return server_time - server_time % SECONDS_PER_DAY
 
 
-def block_reason(paused, open_position_count, pnl_today, spread_points, config, ai_spent_today=0.0):
+def block_reason(paused, open_position_count, pnl_today, spread_points, config, ai_spent_today=0.0, trades_today=0):
     """Return why a new trade is not allowed right now, or None when it is."""
     if paused:
         return "paused"
@@ -18,6 +18,8 @@ def block_reason(paused, open_position_count, pnl_today, spread_points, config, 
         return "position already open"
     if pnl_today <= -config["MAX_DAILY_LOSS"]:
         return f"daily loss limit hit ({pnl_today:.2f})"
+    if config.get("MAX_TRADES_PER_DAY") and trades_today >= config["MAX_TRADES_PER_DAY"]:
+        return f"daily trade limit hit ({trades_today} of {config['MAX_TRADES_PER_DAY']})"
     if spread_points > config["MAX_SPREAD_POINTS"]:
         return f"spread too wide ({spread_points} points)"
     if config["BRAIN"] in ("ai", "hybrid") and ai_spent_today >= config["AI_BUDGET_USD"]:
@@ -25,10 +27,16 @@ def block_reason(paused, open_position_count, pnl_today, spread_points, config, 
     return None
 
 
-def account_error(mode, is_demo_account):
-    """Return why this account must not be traded in this mode, or None."""
+def account_error(mode, is_demo_account, login=None, live_login=""):
+    """Return why this account must not be traded in this mode, or None.
+
+    Live trades the real account the owner approved (LIVE_LOGIN), not whichever real account MT5
+    happens to be on: another one waits for the owner's yes in the app."""
     if mode == "demo" and not is_demo_account:
         return "MODE=demo but the logged-in MT5 account is not a demo account, refusing to trade"
+    if mode == "live" and not is_demo_account and live_login and login is not None and str(login) != str(live_login):
+        return (f"MODE=live is for real account {live_login}, but MT5 is on real account {login}: "
+                "refusing to trade it until you approve it in the app")
     return None
 
 

@@ -131,6 +131,37 @@ STRATEGIES = {
     "mr_zscore": mr_zscore,
 }
 
+# The agent wizard's "Start from" gallery, least to most picky: plain name, idea, the exact rule in words
+# (it must match the code above) and how many conditions must all agree. An agent that keeps the rule's
+# words unchanged runs the code above; once edited, the built-in analyst (plainrules.py) reads the words.
+PLAIN = {
+    "ma_cross": ["Average crossover", "Follows the direction the average price turns. Trades the most often.",
+                 "Buy when the 10-candle average price crosses above the 30-candle average. Sell on the opposite cross.", 1],
+    "bollinger_breakout": ["Breakout after a quiet spell", "Waits for a calm, narrow market, then follows the price when it breaks out.",
+                           "Buy when price closes above the Bollinger bands right after they had narrowed to half their recent width. Sell on a close below them.", 2],
+    "rsi_reversion": ["Bounce after a big move", "When price has run too far too fast, bets on a bounce back.",
+                      "Buy when RSI climbs back above 30 just after a close below the lower Bollinger band. Sell when RSI drops back below 70 after a close above the upper band.", 2],
+    "trend_pullback": ["Buy the dip in a trend", "Trades with a clear trend, but only after a small step back.",
+                       "Buy when the 50-candle average is rising, price dipped to the 20-candle average in the last 3 candles and now closes back above it on a green candle, with RSI between 40 and 65. Sell on the mirror image.", 5],
+    "mr_zscore": ["Snap back to normal", "Only in calm, trendless markets: bets a stretched price returns to its average.",
+                  "Buy when the bigger timeframe shows no trend and no volatility spike, price has stretched at least 2 ATR below its 20-candle average on a fresh move, and a candle then closes above the one before. Sell on the mirror image.", 6],
+    # Written-rules templates: no code above, the built-in analyst reads the words (test_plainrules checks it reads
+    # all of them). The fifth item is the timeframe the wizard starts them on.
+    "steady_trend": ["Steady trend follower", "Rides short trends while momentum is still healthy. Trades often.",
+                     "Buy when EMA(9) crosses above EMA(21) and RSI is between 45 and 65. Sell on the mirror image.", 2, "M1"],
+    "rsi_reversal": ["RSI reversal", "Bets against extremes: buys when sellers run out, sells when buyers do.",
+                     "Buy when RSI crosses above 30 and the candle is green. Sell when RSI crosses below 70 and the candle is red.", 2, "M5"],
+    "bollinger_bounce": ["Bollinger bounce", "Trades closes outside the bands, when RSI agrees the move went too far.",
+                         "Buy when price closes below the lower Bollinger band and RSI is below 35. Sell when price closes above the upper Bollinger band and RSI is above 65.", 2, "M5"],
+    "vwap_snapback": ["VWAP snap-back", "Bets price returns to the day's volume-weighted average after stretching away from it.",
+                      "Buy when price is more than 0.3% below VWAP and RSI is below 35. Sell when price is more than 0.3% above VWAP and RSI is above 65.", 2, "M1"],
+    "macd_momentum": ["MACD momentum", "Follows momentum turns, but never against the bigger trend.",
+                      "Buy when MACD crosses above its signal line, the MACD histogram is rising and price is above EMA(50). Sell on the mirror image.", 3, "M15"],
+    "confluence": ["Confluence, 3 of 4", "Trades only when most of four separate signals point the same way. In a steady trend that is often.",
+                   "Buy when at least 3 of these 4 hold: price is above EMA(50), MACD is above its signal line, RSI is above 50, price is above the middle Bollinger band. Sell on the mirror image.", 4, "M15"],
+}
+PLAIN = dict(sorted(PLAIN.items(), key=lambda item: item[1][3]))  # the gallery runs from least to most picky
+
 
 def selected(config):
     """Strategy names chosen by STRATEGY in .env."""
