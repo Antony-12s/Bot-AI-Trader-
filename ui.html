@@ -710,10 +710,14 @@ $("mt5btn").addEventListener("click", async () => {
 const askedLive = new Set();
 async function followAccount(state) {
   let live = false;
-  if (!state.demo && mode !== "live") {  // already Live: only its slot gets filled, nothing to ask
+  const approved = ((state.accounts || {}).live || {}).login;
+  // asked when switching to Live, and when MT5 is on another real account than the approved one
+  if (!state.demo && (mode !== "live" || (approved && approved !== String(state.login)))) {
     if (askedLive.has(state.login) || document.visibilityState !== "visible") return;
     askedLive.add(state.login);
-    live = confirm(`MetaTrader 5 is logged in to a REAL MONEY account: ${state.login} on ${state.server}.\n\nSwitch TradeBot to Live and let the bot trade it?`);
+    live = confirm(approved && mode === "live"
+      ? `MetaTrader 5 switched to ANOTHER real money account: ${state.login} on ${state.server} (your Live account is ${approved}).\n\nLet the bot trade ${state.login} instead? Until you say yes it refuses to.`
+      : `MetaTrader 5 is logged in to a REAL MONEY account: ${state.login} on ${state.server}.\n\nSwitch TradeBot to Live and let the bot trade it?`);
     if (!live) return;
   }
   try {

@@ -226,7 +226,7 @@ def place_order(side, tick, symbol_info, config, reason="", atr_value=None, spre
     # Re-checked on every order: the terminal can be switched to another account mid-run.
     account = mt5.account_info()
     is_demo = account is not None and account.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO
-    error = account_error(config["MODE"], is_demo)
+    error = account_error(config["MODE"], is_demo, getattr(account, "login", None), config.get("LIVE_LOGIN", ""))
     if error:
         notify(config, error)
         raise SystemExit(error)
@@ -454,6 +454,8 @@ def run_agent_on(config, state, journal, paper, agent, frame, market):
     settle_key = (market, agent["timeframe"])
     if paper and state["settle_seen"].get(settle_key) not in (None, candle["time"]):
         settle_paper(market_config, state, candle, symbol_info)  # this market's paper trades, once per new candle
+        if agent["mode"] == "auto" and any(a["id"] == agent["id"] and a["mode"] != "auto" for a in agents.load()):
+            agent = dict(agent, mode="watch")  # that settle's loss just paused it (agents.after_trade): no new entry now
     state["settle_seen"][settle_key] = candle["time"]
     key, now = (agent["id"], market), time.time()
     seen = state["agent_seen"].get(key)
@@ -520,7 +522,7 @@ def main():
             raise SystemExit(f"symbol {config['SYMBOL']} not found, broker naming differs: check SYMBOL in .env")
         account = mt5.account_info()
         is_demo = account is not None and account.trade_mode == mt5.ACCOUNT_TRADE_MODE_DEMO
-        error = account_error(config["MODE"], is_demo)
+        error = account_error(config["MODE"], is_demo, getattr(account, "login", None), config.get("LIVE_LOGIN", ""))
         if error:
             raise SystemExit(error)
         state = {

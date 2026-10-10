@@ -95,6 +95,10 @@ class RiskTest(unittest.TestCase):
         self.assertIsNotNone(bot.account_error("demo", is_demo_account=False))
         self.assertIsNone(bot.account_error("demo", is_demo_account=True))
         self.assertIsNone(bot.account_error("live", is_demo_account=False))
+        # Live trades the approved real account only: another one waits for the owner's yes
+        self.assertIsNone(bot.account_error("live", False, 450272430, "450272430"))
+        self.assertIn("approve it in the app", bot.account_error("live", False, 111, "450272430"))
+        self.assertIsNone(bot.account_error("live", True, 111, "450272430"))  # a demo account is never real money
 
     def test_pnl_today_skips_deposits_and_yesterday(self):
         today = TICK.time - 60

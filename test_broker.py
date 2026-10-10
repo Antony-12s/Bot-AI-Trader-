@@ -246,6 +246,12 @@ class BrokerTest(unittest.TestCase):
             with mock.patch.object(broker, "status", return_value=refused):  # the broker said "Invalid account"
                 self.assertEqual(ui.follow_account(True, env), {})
             self.assertEqual(ui.read_env(env)["LIVE_LOGIN"], "450272430")  # a refused login is never filed
+            other = dict(real, login=999)  # MT5 moved to another real account while on Live
+            with mock.patch.object(broker, "status", return_value=other):
+                self.assertEqual(ui.follow_account(False, env)["instead_of"], "450272430")
+                self.assertEqual(ui.read_env(env)["LIVE_LOGIN"], "450272430")  # not filed without a yes
+                ui.follow_account(True, env)
+            self.assertEqual(ui.read_env(env)["LIVE_LOGIN"], "999")
 
     def test_dashboard_refuses_to_switch_accounts_under_a_running_bot(self):
         mocks = self.patched()

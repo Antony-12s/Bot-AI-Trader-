@@ -27,10 +27,16 @@ def block_reason(paused, open_position_count, pnl_today, spread_points, config, 
     return None
 
 
-def account_error(mode, is_demo_account):
-    """Return why this account must not be traded in this mode, or None."""
+def account_error(mode, is_demo_account, login=None, live_login=""):
+    """Return why this account must not be traded in this mode, or None.
+
+    Live trades the real account the owner approved (LIVE_LOGIN), not whichever real account MT5
+    happens to be on: another one waits for the owner's yes in the app."""
     if mode == "demo" and not is_demo_account:
         return "MODE=demo but the logged-in MT5 account is not a demo account, refusing to trade"
+    if mode == "live" and not is_demo_account and live_login and login is not None and str(login) != str(live_login):
+        return (f"MODE=live is for real account {live_login}, but MT5 is on real account {login}: "
+                "refusing to trade it until you approve it in the app")
     return None
 
 

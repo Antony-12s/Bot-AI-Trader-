@@ -403,6 +403,9 @@ def follow_account(live_ok=False, path=ENV_PATH):
         return {}  # offline can mean the broker refused the login: that account is not filed, and decides nothing
     kind = "demo" if account["demo"] else "live"
     values = read_env(path)
+    if kind == "live" and values["LIVE_LOGIN"] and values["LIVE_LOGIN"] != str(account["login"]) and not live_ok:
+        # another real account than the approved one: nothing is filed, and the bot refuses it (risk.account_error)
+        return {"ask": account["login"], "server": account["server"], "instead_of": values["LIVE_LOGIN"]}
     slot = {f"{kind.upper()}_LOGIN": str(account["login"]), f"{kind.upper()}_SERVER": account["server"]}
     changes = {key: value for key, value in slot.items() if values[key] != value}
     if values["MODE"] != kind:

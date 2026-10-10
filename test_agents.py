@@ -233,6 +233,21 @@ class RunAgentsTest(unittest.TestCase):
         self.assertTrue(row["reason"].startswith("XAUUSD · 100%"))
         self.assertEqual(self.journal.open_trades(), [])
 
+    def test_an_agent_paused_by_this_candles_settle_does_not_enter_on_it(self):
+        agent = agents.clean(dict(GOOD, markets=["XAUUSD"], mode="auto"))
+        paused = dict(agent, mode="watch")  # what agents.json says once that settle's loss tripped the brake
+        self.run_loop([agent], {"XAUUSD": candles(CROSS_UP)})  # first look
+        with mock.patch.object(agents, "load", side_effect=[[agent], [paused]]):
+            with mock.patch.object(bot.mt5, "symbol_select", create=True), \
+                    mock.patch.object(bot.mt5, "copy_rates_from_pos", return_value=candles(CROSS_UP, shift=1)), \
+                    mock.patch.object(bot.mt5, "symbol_info", return_value=GOLD), \
+                    mock.patch.object(bot.mt5, "symbol_info_tick", return_value=TICK), \
+                    mock.patch.object(bot.mt5, "positions_get", return_value=()), \
+                    mock.patch.object(bot.mt5, "history_deals_get", return_value=()), \
+                    mock.patch("builtins.print"), mock.patch.object(bot, "notify"):
+                bot.run_agents(self.config, self.state)
+        self.assertEqual(self.journal.open_trades(), [])  # the cross still signalled, but it only watches now
+
     def test_suggest_tells_the_owner_and_never_trades(self):
         agent = agents.clean(dict(GOOD, markets=["XAUUSD"], mode="suggest"))
         self.run_loop([agent], {"XAUUSD": candles(CROSS_UP)})

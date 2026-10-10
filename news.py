@@ -40,7 +40,10 @@ def events(now=None, opener=urllib.request.urlopen):
             with opener(request, timeout=15) as response:
                 cache.update(events=parse(json.load(response)), problem=None)
         except Exception as error:  # offline, feed moved: keep the last list, say why
-            cache["problem"] = f"news calendar unavailable ({error.__class__.__name__}): the news pause is off"
+            cache["problem"] = (
+                f"news calendar could not be refreshed ({error.__class__.__name__}): still pausing for the"
+                f" {len(cache['events'])} high-impact events read earlier this week" if cache["events"]
+                else f"news calendar unavailable ({error.__class__.__name__}): the news pause is off")
     return cache["events"]
 
 

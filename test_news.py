@@ -48,6 +48,10 @@ class BlackoutTest(unittest.TestCase):
         with mock.patch.dict(news.cache, {"events": [], "fetched": 0.0, "problem": None}):
             self.assertIsNone(news.blackout(("USD",), 30, NFP, dead))
             self.assertIn("news pause is off", news.cache["problem"])
+        # a failed refresh keeps pausing for the events read earlier, and says so
+        news.cache["fetched"] = 0.0
+        self.assertIsNotNone(news.blackout(("USD",), 30, NFP, dead))
+        self.assertIn("still pausing for the 2 high-impact events", news.cache["problem"])
         self.assertIsNone(news.blackout((), 30, NFP, dead))  # no currencies: the feed is not even read
 
 
