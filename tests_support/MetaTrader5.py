@@ -12,7 +12,7 @@ ACCOUNT_TRADE_MODE_DEMO, ACCOUNT_TRADE_MODE_CONTEST, ACCOUNT_TRADE_MODE_REAL = 0
 DEAL_TYPE_BUY, DEAL_TYPE_SELL, DEAL_TYPE_BALANCE = 0, 1, 2
 TRADE_RETCODE_DONE = 10009
 ORDER_TYPE_BUY, ORDER_TYPE_SELL = 0, 1
-TRADE_ACTION_DEAL = 1
+TRADE_ACTION_DEAL, TRADE_ACTION_SLTP = 1, 6
 ORDER_TIME_GTC = 0
 
 def _unavailable(*args, **kwargs):
@@ -23,5 +23,5 @@ positions_get = history_deals_get = copy_rates_from_pos = order_send = last_erro
 DEAL_ENTRY_IN, DEAL_ENTRY_OUT, DEAL_ENTRY_INOUT, DEAL_ENTRY_OUT_BY = 0, 1, 2, 3
 DEAL_REASON_CLIENT, DEAL_REASON_MOBILE, DEAL_REASON_WEB, DEAL_REASON_EXPERT = 0, 1, 2, 3
 DEAL_REASON_SL, DEAL_REASON_TP, DEAL_REASON_SO = 4, 5, 6
-terminal_info = _unavailable
+terminal_info = login = _unavailable
 symbols_get = _unavailable

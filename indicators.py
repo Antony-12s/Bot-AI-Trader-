@@ -7,7 +7,6 @@ result[-2] to the candle before. Too little data gives an empty list.
 EMA-based values (ema, rsi, macd) need history to settle: feed them at least
 3-4x their period, or they will not match what the MT5 chart shows.
 """
-import statistics
 
 
 def sma(prices, period):
@@ -63,7 +62,9 @@ def macd(prices, fast=12, slow=26, signal=9):
 def bollinger(prices, period=20, deviations=2.0):
     """Return (lower, middle, upper) bands using population standard deviation."""
     middle = sma(prices, period)
-    widths = [deviations * statistics.pstdev(prices[start:start + period]) for start in range(len(middle))]
+    # population standard deviation in plain floats: statistics.pstdev is exact (Fractions) and ~30x slower
+    widths = [deviations * (sum((p - mean) ** 2 for p in prices[start:start + period]) / period) ** 0.5
+              for start, mean in enumerate(middle)]
     lower = [mean - width for mean, width in zip(middle, widths)]
     upper = [mean + width for mean, width in zip(middle, widths)]
     return lower, middle, upper
@@ -88,6 +89,23 @@ def atr(candles, period=14):
     values = [sum(ranges[:period]) / period]
     for value in ranges[period:]:
         values.append((values[-1] * (period - 1) + value) / period)
+    return values
+
+
+def vwap(candles, day_seconds=86400):
+    """Session VWAP: the day's average price, each candle weighted by its volume, restarting each day.
+
+    Days follow the candle times (broker server time). MT5 gives tick volume for CFDs and forex, the
+    usual stand-in; candles without volume weigh 1 each, which makes it the day's plain average.
+    """
+    values, day, weighted, total = [], None, 0.0, 0.0
+    for candle in candles:
+        if candle["time"] // day_seconds != day:
+            day, weighted, total = candle["time"] // day_seconds, 0.0, 0.0
+        weight = candle.get("volume") or 1
+        weighted += weight * (candle["high"] + candle["low"] + candle["close"]) / 3
+        total += weight
+        values.append(weighted / total)
     return values
 
 

@@ -11,8 +11,9 @@ the stop is taken, because the candle does not say which came first.
 import risk
 
 
-def open_position(side, bid, spread_points, point, digits, config, opened_at, reason="", atr_value=None):
-    """Virtual position opened right after a candle closed, at the current bid/ask.
+def open_position(side, bid, spread_points, point, digits, config, opened_at, reason="", atr_value=None, balance=0.0):
+    """Virtual position opened right after a candle closed, at the current bid/ask, or None when
+    RISK_PERCENT of balance cannot buy the smallest lot (0.01) at this stop.
 
     Stops come from risk.stop_distances: ATR multiples when configured, never closer
     than two spreads.
@@ -21,9 +22,15 @@ def open_position(side, bid, spread_points, point, digits, config, opened_at, re
     entry = ask if side == "buy" else bid
     stop_points, target_points = risk.stop_distances(config, point, atr_value, floor_points=2 * spread_points)
     stop_loss, take_profit = risk.stop_levels(side, entry, point, digits, stop_points, target_points)
+    lot = config["LOT"]
+    if config.get("RISK_PERCENT") and balance:
+        lot, _ = risk.risk_lot(balance, config["RISK_PERCENT"], stop_points, point, point * config["CONTRACT_SIZE"], 0.01, 100, 0.01)
+        if lot is None:
+            return None
     return {
         "side": side,
-        "lot": config["LOT"],
+        "lot": lot,
+        "first_sl": stop_loss,  # the stop it opened with: break-even and trailing count in its distance
         "entry": entry,
         "sl": stop_loss,
         "tp": take_profit,

@@ -1,4 +1,7 @@
-"""AI brain: asks Claude for buy / sell / hold once per closed candle, and learns from the result.
+"""AI brain: asks an AI model for buy / sell / hold once per closed candle, and learns from the result.
+
+AI_PROVIDER picks the model: claude (default, Anthropic SDK), openai (GPT) or gemini, each with
+its own key in .env. They all answer the same prompts in the same JSON shape through ask().
 
 Enabled with BRAIN=ai (Claude decides alone) or BRAIN=hybrid (the rules in strategies.py
 propose setups, Claude takes one or holds). The model only picks the direction: lot size,
@@ -11,6 +14,8 @@ distilled and the lessons from its recent trades. After each closed trade it wri
 lesson (reflect), and every DISTILL_EVERY closed trades it rewrites the playbook (distill).
 """
 import json
+import urllib.error
+import urllib.request
 from collections import namedtuple
 from datetime import datetime, timezone
 
@@ -33,6 +38,15 @@ DISTILL_EVERY = 10  # closed trades between playbook rewrites
 # USD per million tokens for claude-sonnet-5-5 on the Claude API, October 2026. When the
 # fallback serves another model the real bill differs a little: treat spend as an estimate.
 PRICES = {"input": 2.0, "output": 10.0, "cache_write": 2.5, "cache_read": 0.20}
+
+# Other providers: default model and USD per million tokens (standard tier, October 2026).
+# AI_MODEL in .env overrides the model; the spend estimate keeps these prices, so check yours.
+OPENAI_MODEL = "gpt-6.1-sol"
+OPENAI_PRICES = {"input": 2.0, "cached": 0.10, "output": 10.0}
+GEMINI_MODEL = "gemini-3.8-flash"
+# Promo price is 0.75 / 3.75 until 2026-12-31; the later price is used so the daily budget errs safe.
+GEMINI_PRICES = {"input": 1.50, "cached": 0.375, "output": 7.50}
+KEYS = {"claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY"}
 
 Decision = namedtuple("Decision", "signal reason cost_usd")
 
@@ -147,16 +161,171 @@ def cost_usd(usage):
 
 
 def ask(system, text, schema, config, effort):
-    """One structured call to Claude. Returns (answer dict or None, problem or None, cost_usd).
+    """One structured call to the configured AI. Returns (answer dict or None, problem or None, cost_usd).
 
     Every problem string starts with "AI error" so callers can tell a failed call from a hold.
     """
+    spent, problem = 0.0, "AI error: no AI provider set"
+    for provider in providers(config):  # in order: the next one only when this one fails
+        if provider == "openai":
+            answer, problem, cost = _ask_http(_openai_request, _openai_reply, system, text, schema, config, "openai")
+        elif provider == "gemini":
+            answer, problem, cost = _ask_http(_gemini_request, _gemini_reply, system, text, schema, config, "gemini")
+        else:
+            answer, problem, cost = _ask_claude(system, text, schema, config, effort)
+        spent += cost
+        if answer is not None:
+            return answer, None, spent
+    return None, problem, spent
+
+
+def providers(config):
+    """AI_PROVIDER as an ordered list ("claude,openai" falls back to GPT when Claude fails)."""
+    return [name.strip() for name in config.get("AI_PROVIDER", "claude").split(",") if name.strip()]
+
+
+def model_for(config, provider):
+    """The provider's own model setting, the older AI_MODEL for the first provider, else the default."""
+    own = config.get("AI_MODEL_" + provider.upper(), "")
+    legacy = config.get("AI_MODEL", "") if providers(config)[:1] == [provider] else ""
+    return own or legacy or DEFAULT_MODELS[provider]
+
+
+def _openai_request(system, text, schema, config):
+    body = {
+        "model": model_for(config, "openai"),
+        "instructions": system,
+        "input": text,
+        "max_output_tokens": 16000,
+        "text": {"format": {"type": "json_schema", "name": "answer", "strict": True, "schema": schema}},
+    }
+    headers = {"Authorization": "Bearer " + config["OPENAI_API_KEY"]}
+    return "https://api.openai.com/v1/responses", headers, body
+
+
+def _openai_reply(reply):
+    """(answer text or None, problem or None, cost_usd) from a Responses API reply."""
+    usage = reply.get("usage") or {}
+    cached = (usage.get("input_tokens_details") or {}).get("cached_tokens", 0)
+    cost = round(((usage.get("input_tokens", 0) - cached) * OPENAI_PRICES["input"] + cached * OPENAI_PRICES["cached"]
+                  + usage.get("output_tokens", 0) * OPENAI_PRICES["output"]) / 1_000_000, 6)
+    if reply.get("status") != "completed":
+        return None, f"AI error: no answer ({reply.get('status')})", cost
+    texts = [part.get("text", "") for item in reply.get("output", []) if item.get("type") == "message"
+             for part in item.get("content", []) if part.get("type") == "output_text"]
+    return ("".join(texts) or None), (None if texts else "AI error: no answer (refused)"), cost
+
+
+def _gemini_schema(schema):
+    """Gemini's responseSchema is an OpenAPI subset: upper-case types, no additionalProperties."""
+    out = {key: value for key, value in schema.items() if key != "additionalProperties"}
+    out["type"] = schema["type"].upper()
+    if "properties" in schema:
+        out["properties"] = {name: _gemini_schema(part) for name, part in schema["properties"].items()}
+    return out
+
+
+def _gemini_request(system, text, schema, config):
+    model = model_for(config, "gemini")
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": text}]}],
+        "generationConfig": {"responseMimeType": "application/json", "responseSchema": _gemini_schema(schema),
+                             "maxOutputTokens": 16000},
+    }
+    headers = {"x-goog-api-key": config["GEMINI_API_KEY"]}
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", headers, body
+
+
+def _gemini_reply(reply):
+    usage = reply.get("usageMetadata") or {}
+    cached = usage.get("cachedContentTokenCount", 0)
+    output = usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)  # thinking is billed as output
+    cost = round(((usage.get("promptTokenCount", 0) - cached) * GEMINI_PRICES["input"] + cached * GEMINI_PRICES["cached"]
+                  + output * GEMINI_PRICES["output"]) / 1_000_000, 6)
+    candidates = reply.get("candidates") or []
+    if not candidates or candidates[0].get("finishReason") != "STOP":
+        reason = candidates[0].get("finishReason") if candidates else (reply.get("promptFeedback") or {}).get("blockReason")
+        return None, f"AI error: no answer ({reason})", cost
+    text = "".join(part.get("text", "") for part in candidates[0].get("content", {}).get("parts", []))
+    return text, None, cost
+
+
+def _ask_http(build, read, system, text, schema, config, provider, opener=None):
+    """GPT and Gemini over plain HTTPS (no SDK to install): same contract as _ask_claude."""
+    url, headers, body = build(system, text, schema, config)
+    request = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
+                                     headers=dict(headers, **{"Content-Type": "application/json"}))
+    key_name = KEYS[provider]
+    try:
+        with (opener or urllib.request.urlopen)(request, timeout=120) as response:  # ponytail: blocking, like Claude's
+            reply = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        if error.code in (401, 403):
+            return None, f"AI error: key rejected, check {key_name} in .env", 0.0
+        return None, f"AI error: API status {error.code}", 0.0
+    except Exception as error:  # a broken brain must hold: never crash the bot, never trade
+        return None, f"AI error: call failed ({type(error).__name__})", 0.0
+    answer_text, problem, cost = read(reply)
+    if problem:
+        return None, problem, cost
+    try:
+        answer = json.loads(answer_text)
+        if any(key not in answer for key in schema["required"]):
+            raise KeyError("incomplete answer")
+    except Exception as error:
+        return None, f"AI error: reply unreadable ({type(error).__name__})", cost
+    return answer, None, cost
+
+
+DEFAULT_MODELS = {"claude": MODEL, "openai": OPENAI_MODEL, "gemini": GEMINI_MODEL}
+# OpenAI lists every model it has; these words mark ones that cannot answer a text prompt.
+NOT_TEXT = ("audio", "realtime", "tts", "transcribe", "image", "search", "embedding", "moderation")
+
+
+def list_models(provider, key, opener=None):
+    """Model ids this key can use, the default first. Free to call, so it doubles as the key test.
+
+    Raises ValueError with a reason a person can act on.
+    """
+    if provider not in KEYS:
+        raise ValueError(f"unknown AI provider {provider}")
+    if not key:
+        raise ValueError(f"no {KEYS[provider]}: paste the key first")
+    if provider == "claude":
+        url, headers = "https://api.anthropic.com/v1/models?limit=100", {"x-api-key": key, "anthropic-version": "2023-06-01"}
+    elif provider == "openai":
+        url, headers = "https://api.openai.com/v1/models", {"Authorization": "Bearer " + key}
+    else:
+        url, headers = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", {"x-goog-api-key": key}
+    try:
+        with (opener or urllib.request.urlopen)(urllib.request.Request(url, headers=headers), timeout=20) as response:
+            reply = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        if error.code in (400, 401, 403):
+            raise ValueError("the key was rejected: check it was copied whole, and that billing is set up") from None
+        raise ValueError(f"the AI company answered with error {error.code}, try again in a minute") from None
+    except OSError as error:
+        raise ValueError(f"could not reach the AI company ({error})") from None
+    if provider == "gemini":
+        ids = [model["name"].split("/")[-1] for model in reply.get("models", [])
+               if model.get("name", "").split("/")[-1].startswith("gemini")
+               and "generateContent" in model.get("supportedGenerationMethods", [])]
+    else:
+        ids = [model["id"] for model in reply.get("data", [])]
+        if provider == "openai":
+            ids = [i for i in ids if i.startswith("gpt-") and not any(word in i for word in NOT_TEXT)]
+    default = DEFAULT_MODELS[provider]
+    return sorted(set(ids), key=lambda i: (i != default, i))
+
+
+def _ask_claude(system, text, schema, config, effort):
     try:
         client = anthropic.Anthropic(api_key=config["ANTHROPIC_API_KEY"] or None, timeout=120.0)
         # ponytail: blocking call, the bot ignores Telegram while Claude thinks;
         # move it to a thread if that ever hurts
         response = client.beta.messages.create(
-            model=MODEL,
+            model=model_for(config, "claude"),
             max_tokens=16000,
             # if a safety classifier declines the request, Anthropic re-runs it on a fallback model
             betas=["server-side-fallback-2026-07-01"],

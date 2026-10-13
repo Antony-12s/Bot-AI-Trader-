@@ -9,7 +9,7 @@ import sys
 
 import MetaTrader5 as mt5
 
-from config import ENV_PATH, TIMEFRAME_SECONDS
+from config import ENV_PATH, TIMEFRAME_SECONDS, terminal_args
 
 TEMPLATE_PATH = ENV_PATH.with_name(".env.example")
 
@@ -140,7 +140,7 @@ def ask_telegram():
 
 def main():
     print("Bot AI Trader setup. Enter accepts the value in brackets.\n")
-    if not mt5.initialize():
+    if not mt5.initialize(**terminal_args()):
         print("Cannot reach MT5. Open the MT5 terminal, log in, then run this again.")
         return 1
     try:

@@ -57,6 +57,22 @@ class ReplayTest(unittest.TestCase):
         self.assertIn("trades: 1 (1 wins, 0 losses, win rate 100%)", text)
         self.assertIn("net: +10.00", text)
 
+    def test_break_even_turns_a_reversal_into_a_scratch_and_risk_sizes_the_lot(self):
+        candles, jump = flat_then_breakout()
+        candles[jump + 1] = candle(jump + 1, 2015.0, open_=2010.0, high=2016.0, low=2009.0)  # 1.1R up, no target
+        candles[jump + 2] = candle(jump + 2, 2001.0, open_=2015.0, high=2015.0, low=2000.0)  # then back through the entry
+        for index in range(jump + 3, len(candles)):
+            candles[index] = candle(index, 2001.0)
+        journal = Journal()
+        config = dict(CONFIG, BREAKEVEN_R=1.0, RISK_PERCENT=1.0, BALANCE=1000.0)
+        replay.replay(candles, config, journal, "be", digits=2, log=lambda line: None)
+        trade = journal.closed_trades(run="be")[0]  # later the averages cross down: a sell, not this test's business
+        self.assertEqual((trade["exit"], trade["profit"], trade["outcome"]), (2010.30, 0.0, "sl"))  # not -5.00
+        self.assertEqual(trade["lot"], 0.02)  # 1% of 1000 = 10 over a 500-point stop at $1 a point per lot
+        journal = Journal()
+        replay.replay(candles, dict(CONFIG, RISK_PERCENT=0.1, BALANCE=1000.0), journal, "tiny", digits=2, log=lambda line: None)
+        self.assertEqual(journal.closed_trades(run="tiny"), [])  # $1 cannot pay for 0.01 lot's $5 stop: no trade
+
     def test_position_left_open_at_the_end_is_booked_at_the_last_close(self):
         candles, jump = flat_then_breakout(length=strategies.CANDLES_NEEDED + 7)
         candles[-1] = candle(len(candles) - 1, 2012.0, open_=2010.0, high=2013.0, low=2009.0)  # never reaches 2020.30

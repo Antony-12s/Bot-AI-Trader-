@@ -28,6 +28,7 @@ import indicators
 from config import JOURNAL_PATH, candle_seconds, load_config
 from journal import Journal, summarize
 from report import format_report, stamp
+import risk
 from risk import block_reason, day_start
 from strategies import STRATEGIES
 
@@ -58,9 +59,12 @@ def read_candles(path, default_spread=30):
     return candles, digits
 
 
-def replay(candles, config, journal, run, digits, log=print):
-    """Trade the candles on paper. Returns why it stopped: "end", "budget" or "ai failures"."""
+def replay(candles, config, journal, run, digits, log=print, decide=None):
+    """Trade the candles on paper. Returns why it stopped: "end", "budget" or "ai failures".
+
+    decide(window) -> (signal, reason, cost) replaces the brain, e.g. an agent's analyst (ui.backtest)."""
     needed = brain.candles_needed(config)
+    learns = brain.learns(config) and decide is None
     point = 10 ** -digits
     position = None
     failures = 0
@@ -71,9 +75,15 @@ def replay(candles, config, journal, run, digits, log=print):
             hit = fills.exit_price(position, candle["high"], candle["low"], candle["spread"], point)
             if hit:
                 position = settle(journal, run, config, position, candles, index, *hit, log=log)
+            else:  # checked with the old stop first: the candle does not say whether its best price came first
+                best = candle["high"] if position["side"] == "buy" else candle["low"]
+                moved = risk.moved_stop(position["side"], position["entry"], position["first_sl"], best, position["sl"], config, digits)
+                position["sl"] = moved if moved is not None else position["sl"]
             continue
-        pnl_today = journal.profit_since(day_start(candle["time"]), "replay", run)
-        blocked = block_reason(False, 0, pnl_today, candle["spread"], config, journal.spend(run=run))
+        start = day_start(candle["time"])
+        pnl_today = journal.profit_since(start, "replay", run)
+        traded = journal.trades_opened_since(start, "replay", run)
+        blocked = block_reason(False, 0, pnl_today, candle["spread"], config, journal.spend(run=run), traded)
         if blocked and blocked.startswith("AI budget"):
             log(f"{stamp(candle['time'])} stopped: {blocked}")
             stopped = "budget"
@@ -81,9 +91,9 @@ def replay(candles, config, journal, run, digits, log=print):
         if blocked:
             continue
         window = candles[index + 1 - needed:index + 1]
-        experience = journal.experience_text() if brain.learns(config) else ""
-        signal, reason, cost = brain.decide(window, config, experience)
-        if brain.learns(config):
+        experience = journal.experience_text() if learns else ""
+        signal, reason, cost = decide(window) if decide else brain.decide(window, config, experience)
+        if learns:
             failures = failures + 1 if reason.startswith("AI error") else 0
         journal.record_decision("replay", run, "decide", candle["time"], signal or "hold", reason, cost)
         if failures >= MAX_AI_FAILURES:
@@ -97,10 +107,13 @@ def replay(candles, config, journal, run, digits, log=print):
         position = fills.open_position(
             signal, opening["open"], opening["spread"], point, digits, config,
             opened_at=opening["time"], reason=reason, atr_value=atr_values[-1] if atr_values else None,
+            balance=config.get("BALANCE", 0.0) + journal.profit_since(0, "replay", run),
         )
+        if position is None:  # RISK_PERCENT of the balance is too small for the smallest lot at this stop
+            continue
         position["index"] = index + 1
         position["trade_id"] = journal.open_trade(
-            "replay", run, config["SYMBOL"], position, snapshot=ai_strategy.snapshot(window, config),
+            "replay", run, config["SYMBOL"], position, snapshot=ai_strategy.snapshot(window, config) if decide is None else None,  # the app's quick tests skip it
             brain=config["BRAIN"],
         )
         log(f"{stamp(opening['time'])} {signal} @ {position['entry']} sl {position['sl']} tp {position['tp']} [{reason}]")
